@@ -8,8 +8,8 @@
         xmlns:models="clr-namespace:VocalSync.Models"
         mc:Ignorable="d"
         Title="VocalSync"
-        Height="820" Width="1040"
-        MinHeight="700" MinWidth="760"
+        Height="860" Width="1040"
+        MinHeight="640" MinWidth="760"
         WindowStartupLocation="CenterScreen"
         Background="#FF121212"
         Foreground="#FFFFFFFF">
@@ -126,6 +126,16 @@
                 </Setter.Value>
             </Setter>
         </Style>
+
+        <!-- Live / workspace divider -->
+        <Style x:Key="WorkspaceSplitterStyle" TargetType="GridSplitter">
+            <Setter Property="HorizontalAlignment" Value="Stretch"/>
+            <Setter Property="Background" Value="#FF252525"/>
+            <Setter Property="BorderBrush" Value="#FF1A1A1A"/>
+            <Setter Property="BorderThickness" Value="0,1,0,1"/>
+            <Setter Property="SnapsToDevicePixels" Value="True"/>
+            <Setter Property="Cursor" Value="SizeNS"/>
+        </Style>
     </Window.Resources>
 
     <!-- Root: library (live workspace) + main column (live capture + embedded analysis) -->
@@ -209,29 +219,36 @@
         </Border>
 
         <Grid Grid.Column="1" Margin="0,0,12,0">
-        <Grid.RowDefinitions>
-            <RowDefinition Height="Auto"/>  <!-- title -->
-            <RowDefinition Height="Auto" MinHeight="176"/>     <!-- note display (live) -->
-            <RowDefinition Height="Auto"/>  <!-- frequency -->
-            <RowDefinition Height="Auto"/>  <!-- level meter label + bar -->
-            <RowDefinition Height="120"/>   <!-- waveform -->
-            <RowDefinition Height="Auto"/>  <!-- device selector -->
-            <RowDefinition Height="Auto"/>  <!-- monitor controls -->
-            <RowDefinition Height="Auto"/>  <!-- recording controls -->
-            <RowDefinition Height="*" MinHeight="260"/> <!-- workspace: analysis + correction -->
-            <RowDefinition Height="Auto"/>  <!-- button -->
-            <RowDefinition Height="36"/>    <!-- status -->
-        </Grid.RowDefinitions>
+            <Grid.RowDefinitions>
+                <RowDefinition Height="1.55*" MinHeight="188"/>
+                <RowDefinition Height="5"/>
+                <RowDefinition Height="3.45*" MinHeight="280"/>
+                <RowDefinition Height="Auto"/>
+                <RowDefinition Height="36"/>
+            </Grid.RowDefinitions>
+
+            <!-- LIVE: compact monitoring + input strip -->
+            <Grid Grid.Row="0" MinHeight="0">
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto"/>
+                    <RowDefinition Height="Auto"/>
+                    <RowDefinition Height="Auto"/>
+                    <RowDefinition Height="Auto"/>
+                    <RowDefinition Height="68"/>
+                    <RowDefinition Height="Auto"/>
+                    <RowDefinition Height="Auto"/>
+                    <RowDefinition Height="Auto"/>
+                </Grid.RowDefinitions>
 
         <!-- App title + gear button (same row, overlaid) -->
         <TextBlock Grid.Row="0"
                    Text="VOCALSYNC"
                    FontFamily="Segoe UI"
-                   FontSize="13"
+                   FontSize="12"
                    FontWeight="Bold"
                    Foreground="#FF888888"
                    HorizontalAlignment="Center"
-                   Margin="0,24,0,0"/>
+                   Margin="0,8,0,0"/>
 
         <Button Grid.Row="0"
                 x:Name="SettingsButton"
@@ -239,7 +256,7 @@
                 HorizontalAlignment="Right"
                 VerticalAlignment="Top"
                 Width="32" Height="32"
-                Margin="0,12,12,0"
+                Margin="0,4,12,0"
                 FontSize="15"
                 Cursor="Hand"
                 ToolTip="Settings"
@@ -273,43 +290,43 @@
             </Button.Style>
         </Button>
 
-        <!-- Large note display -->
+        <!-- Note display (compact) -->
         <TextBlock Grid.Row="1"
                    Text="{Binding NoteName}"
                    FontFamily="Segoe UI Light"
-                   FontSize="148"
+                   FontSize="88"
                    FontWeight="Light"
                    Foreground="#FFFFFFFF"
                    HorizontalAlignment="Center"
                    VerticalAlignment="Center"
                    TextAlignment="Center"
-                   Margin="0,-12,0,0"/>
+                   Margin="0,-6,0,-2"/>
 
         <!-- Frequency readout + active dot -->
-        <Grid Grid.Row="2" Margin="0,0,0,10">
+        <Grid Grid.Row="2" Margin="0,0,0,4">
             <TextBlock Text="{Binding FrequencyText}"
                        FontFamily="Segoe UI"
-                       FontSize="22"
+                       FontSize="16"
                        Foreground="#FF888888"
                        HorizontalAlignment="Center"/>
-            <Ellipse Width="8" Height="8"
+            <Ellipse Width="6" Height="6"
                      HorizontalAlignment="Center"
                      VerticalAlignment="Bottom"
-                     Margin="0,0,0,-10"
+                     Margin="0,0,0,-6"
                      Fill="#FF1DB954"
                      Visibility="{Binding IsRunning,
                                   Converter={StaticResource BoolToVisibility}}"/>
         </Grid>
 
         <!-- Level meter -->
-        <StackPanel Grid.Row="3" Margin="0,4,0,8">
+        <StackPanel Grid.Row="3" Margin="0,2,0,4">
             <TextBlock Text="INPUT LEVEL"
                        FontFamily="Segoe UI"
                        FontSize="9"
                        FontWeight="SemiBold"
                        Foreground="#FF444444"
                        HorizontalAlignment="Left"
-                       Margin="22,0,0,4"/>
+                       Margin="22,0,0,2"/>
             <ProgressBar x:Name="LevelMeter"
                          Style="{StaticResource LevelMeterStyle}"
                          Minimum="0" Maximum="1"
@@ -318,7 +335,7 @@
 
         <!-- Waveform visualizer -->
         <Border Grid.Row="4"
-                Margin="20,0,20,8"
+                Margin="16,0,16,4"
                 CornerRadius="6"
                 Background="#FF0D0D0D"
                 ClipToBounds="True">
@@ -326,7 +343,7 @@
         </Border>
 
         <!-- Device selector -->
-        <Grid Grid.Row="5" Margin="20,8,20,4">
+        <Grid Grid.Row="5" Margin="16,4,16,2">
             <Grid.ColumnDefinitions>
                 <ColumnDefinition Width="Auto"/>
                 <ColumnDefinition Width="*"/>
@@ -362,7 +379,7 @@
 
         <!-- Monitor controls -->
         <!-- ⚠ Use headphones to avoid microphone feedback when monitoring is enabled -->
-        <Grid Grid.Row="6" Margin="20,4,20,4">
+        <Grid Grid.Row="6" Margin="16,2,16,2">
             <Grid.ColumnDefinitions>
                 <ColumnDefinition Width="Auto"/>
                 <ColumnDefinition Width="Auto"/>
@@ -414,7 +431,7 @@
         </Grid>
 
         <!-- Recording controls (live) — playback uses library selection or last take -->
-        <Grid Grid.Row="7" Margin="20,4,20,4">
+        <Grid Grid.Row="7" Margin="16,2,16,4">
             <Grid.ColumnDefinitions>
                 <ColumnDefinition Width="Auto"/>
                 <ColumnDefinition Width="Auto"/>
@@ -537,31 +554,39 @@
                        Margin="10,0,0,0"
                        ToolTip="{Binding PlaybackTargetPath}"/>
         </Grid>
+            </Grid>
 
-        <!-- Workspace: analysis panel sizes itself; scrolling is internal to graph/header region only -->
-        <Border Grid.Row="8"
-                Margin="12,8,8,0"
-                Padding="12,0,12,0"
-                Background="Transparent">
-            <views:AnalysisPanel x:Name="WorkspacePanel" VerticalAlignment="Stretch"/>
-        </Border>
+            <!-- Adjustable split: live (above) vs analysis workspace (below) -->
+            <GridSplitter Grid.Row="1"
+                          Style="{StaticResource WorkspaceSplitterStyle}"
+                          ResizeDirection="Rows"
+                          ShowsPreview="False"/>
 
-        <!-- Start/Stop capture -->
-        <Button Grid.Row="9"
-                Content="{Binding ToggleButtonLabel}"
-                Style="{StaticResource ToggleButtonStyle}"
-                HorizontalAlignment="Center"
-                Margin="0,4,0,0"
-                Click="ToggleButton_Click"/>
+            <!-- Workspace: analysis + correction (dominant vertical share) -->
+            <Border Grid.Row="2"
+                    Margin="8,0,8,0"
+                    Padding="8,0,8,0"
+                    Background="Transparent"
+                    ClipToBounds="True">
+                <views:AnalysisPanel x:Name="WorkspacePanel" VerticalAlignment="Stretch"/>
+            </Border>
 
-        <!-- Status text -->
-        <TextBlock Grid.Row="10"
-                   Text="{Binding StatusText}"
-                   FontFamily="Segoe UI"
-                   FontSize="11"
-                   Foreground="#FF555555"
-                   HorizontalAlignment="Center"
-                   VerticalAlignment="Center"/>
+            <!-- Start/Stop capture -->
+            <Button Grid.Row="3"
+                    Content="{Binding ToggleButtonLabel}"
+                    Style="{StaticResource ToggleButtonStyle}"
+                    HorizontalAlignment="Center"
+                    Margin="0,4,0,0"
+                    Click="ToggleButton_Click"/>
+
+            <!-- Status text -->
+            <TextBlock Grid.Row="4"
+                       Text="{Binding StatusText}"
+                       FontFamily="Segoe UI"
+                       FontSize="11"
+                       Foreground="#FF555555"
+                       HorizontalAlignment="Center"
+                       VerticalAlignment="Center"/>
         </Grid>
     </Grid>
 </Window>

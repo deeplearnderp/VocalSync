@@ -4,8 +4,8 @@
              Background="Transparent"
              Foreground="#FFFFFFFF">
 
-    <!-- Correction docked bottom (never scrolled). Header + graph + legend scroll only if vertical space is tight. -->
-    <DockPanel Margin="0,10,0,0" LastChildFill="True">
+    <!-- Correction docked bottom. Header + graph + legend fill remaining height (no scroll). -->
+    <DockPanel Margin="0,4,0,0" LastChildFill="True">
 
         <!-- CONTROL AREA: always measured first, stays visible at bottom of panel -->
         <Border DockPanel.Dock="Bottom"
@@ -13,7 +13,7 @@
                 BorderBrush="#FF1E1E1E"
                 BorderThickness="1"
                 CornerRadius="6"
-                Margin="0,10,0,0"
+                Margin="0,6,0,0"
                 Padding="14,10">
             <Grid>
                 <Grid.RowDefinitions>
@@ -187,13 +187,16 @@
             </Grid>
         </Border>
 
-        <!-- HEADER + GRAPH + LEGEND: only this region scrolls when height is constrained -->
-        <ScrollViewer VerticalScrollBarVisibility="Auto"
-                      HorizontalScrollBarVisibility="Disabled"
-                      Padding="0,0,2,0">
-            <StackPanel>
+        <!-- HEADER + GRAPH + LEGEND: star row gives graph vertical room without scrollbar -->
+        <Grid>
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto"/>
+                <RowDefinition Height="*" MinHeight="120"/>
+                <RowDefinition Height="Auto"/>
+            </Grid.RowDefinitions>
+
                 <!-- Header -->
-                <Grid Margin="0,0,0,8">
+                <Grid Grid.Row="0" Margin="0,0,0,6">
                     <Grid.ColumnDefinitions>
                         <ColumnDefinition Width="*"/>
                         <ColumnDefinition Width="Auto"/>
@@ -230,18 +233,19 @@
                     </Border>
                 </Grid>
 
-                <!-- Graph: fixed height (no * row — avoids unbounded stretch inside parent) -->
-                <Border Height="240"
+                <!-- Graph: stretches with allocated workspace height -->
+                <Border Grid.Row="1"
                         Background="#FF121212"
                         CornerRadius="6"
-                        ClipToBounds="True">
+                        ClipToBounds="True"
+                        MinHeight="120">
                     <Image x:Name="GraphImage"
                            Stretch="Fill"
                            RenderOptions.BitmapScalingMode="NearestNeighbor"/>
                 </Border>
 
                 <!-- Legend -->
-                <StackPanel Orientation="Horizontal" VerticalAlignment="Center" Margin="0,8,0,0">
+                <StackPanel Grid.Row="2" Orientation="Horizontal" VerticalAlignment="Center" Margin="0,4,0,0">
                     <Ellipse Width="8" Height="8" Fill="#FF1DB954" Margin="0,0,4,0" VerticalAlignment="Center"/>
                     <TextBlock Text="Voiced (high confidence)"
                                FontFamily="Segoe UI" FontSize="10" Foreground="#FF555555" Margin="0,0,16,0" VerticalAlignment="Center"/>
@@ -252,7 +256,6 @@
                     <TextBlock Text="Semitone grid"
                                FontFamily="Segoe UI" FontSize="10" Foreground="#FF555555" VerticalAlignment="Center"/>
                 </StackPanel>
-            </StackPanel>
-        </ScrollViewer>
+        </Grid>
     </DockPanel>
 </UserControl>
