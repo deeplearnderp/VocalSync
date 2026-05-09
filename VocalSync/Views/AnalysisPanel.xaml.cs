@@ -147,7 +147,15 @@ public partial class AnalysisPanel : UserControl
     private readonly WavPlaybackService _player = new();
 
     private string? _correctedPath;
+    /// <summary>Per-frame pitch after correction blend (same length as <see cref="_points"/>); null if no render yet.</summary>
+    private PitchPoint[]? _correctedContourPoints;
     private bool _isRendering;
+
+    /// <summary>Future-ready: hide original contour layer without removing data.</summary>
+    private bool _showOriginalContour = true;
+
+    /// <summary>Future-ready: hide corrected contour layer (still requires <see cref="_correctedContourPoints"/>).</summary>
+    private bool _showCorrectedContour = true;
 
     /// <summary>Invalidates in-flight graph retry chains when analysis clears or a new session loads.</summary>
     private int _graphRedrawToken;
@@ -351,6 +359,9 @@ public partial class AnalysisPanel : UserControl
         L(clearSrcSeq,
             $"[GraphSource] prev={DescribeSource(GraphImage.Source)} -> null REASON:Clear {TC}");
         GraphImage.Source = null;
+        GraphContourOriginalImage.Source = null;
+        GraphContourCorrectedImage.Source = null;
+        GraphContourCorrectedImage.Visibility = Visibility.Collapsed;
         _lastKnownSource    = null;
         _lastKnownSourceSeq = clearSrcSeq;
         NoteLabelsCanvas.Children.Clear();
@@ -488,6 +499,7 @@ public partial class AnalysisPanel : UserControl
     {
         _isRendering = false;
         _correctedPath = null;
+        _correctedContourPoints = null;
         StopPlayheadTimerIfIdle();
         _player.Stop();
         PlayCorrectedButton.Content = "▶ Play Corrected";
@@ -542,13 +554,24 @@ public partial class AnalysisPanel : UserControl
 
         if (w < 2 || h < 2)
         {
+            GraphContourOriginalImage.Source = null;
+            GraphContourCorrectedImage.Source = null;
+            GraphContourCorrectedImage.Visibility = Visibility.Collapsed;
             L(NextSeq(), $"RenderGraph() EXIT-TINY bitmap={w}×{h} {TC}");
             return;
         }
 
-        // ── 1. Compute dynamic MIDI range from voiced points ──────────────
+        // ── 1. Compute dynamic MIDI range (union original + corrected when both present) ──
         int midiMin, midiMax;
-        var voiced = points.Where(p => p.IsVoiced && p.MidiNote >= MidiAbsMin && p.MidiNote <= MidiAbsMax).ToArray();
+        IEnumerable<PitchPoint> rangePoints = points;
+        if (_correctedContourPoints != null
+            && _correctedContourPoints.Length == points.Length
+            && _showCorrectedContour)
+            rangePoints = rangePoints.Concat(_correctedContourPoints);
+
+        var voiced = rangePoints
+            .Where(p => p.IsVoiced && p.MidiNote >= MidiAbsMin && p.MidiNote <= MidiAbsMax)
+            .ToArray();
 
         if (voiced.Length > 0)
         {
@@ -662,38 +685,71 @@ public partial class AnalysisPanel : UserControl
             }
         }
 
-        // ── 5. Contour ────────────────────────────────────────────────────
-        if (points.Length > 0)
-            DrawContour(pixels, w, h, points, _renderTotalSeconds, midiMin, midiMax);
+        // ── 5. Background bitmap only (no contour on this layer) ─────────
+        // ── 6. Static contour bitmaps (original + optional corrected) ─────
+        WriteableBitmap bgBmp = CommitPixelsToWriteableBitmap(w, h, pixels);
 
-        // ── 6. Bitmap commit ──────────────────────────────────────────────
-        var bmp = new WriteableBitmap(w, h, 96, 96, PixelFormats.Bgra32, null);
-        bmp.Lock();
-        bmp.WritePixels(new Int32Rect(0, 0, w, h), pixels, w * 4, 0);
-        bmp.Unlock();
+        if (_showOriginalContour && points.Length > 0)
+        {
+            var origLayer = new int[w * h];
+            DrawContourStyled(origLayer, w, h, points, _renderTotalSeconds, midiMin, midiMax,
+                colBlock: unchecked((int)0x99008866),
+                colLine: unchecked((int)0xBB00AA88),
+                colLine2: unchecked((int)0x77007755),
+                blockRadius: 2,
+                tag: "original");
+            GraphContourOriginalImage.Source = CommitPixelsToWriteableBitmap(w, h, origLayer);
+        }
+        else
+        {
+            GraphContourOriginalImage.Source = null;
+        }
 
-        // Pre-commit: full state snapshot
+        bool showCorrectedLayer = _showCorrectedContour
+            && _correctedContourPoints != null
+            && _correctedContourPoints.Length == points.Length
+            && points.Length > 0
+            && !string.IsNullOrEmpty(_correctedPath)
+            && File.Exists(_correctedPath);
+
+        if (showCorrectedLayer)
+        {
+            var corrLayer = new int[w * h];
+            DrawContourStyled(corrLayer, w, h, _correctedContourPoints!, _renderTotalSeconds, midiMin, midiMax,
+                colBlock: unchecked((int)0xFF45D5FF),
+                colLine: unchecked((int)0xFF2BB8E8),
+                colLine2: unchecked((int)0xFF2080C0),
+                blockRadius: 1,
+                tag: "corrected");
+            GraphContourCorrectedImage.Source = CommitPixelsToWriteableBitmap(w, h, corrLayer);
+            GraphContourCorrectedImage.Visibility = Visibility.Visible;
+        }
+        else
+        {
+            GraphContourCorrectedImage.Source = null;
+            GraphContourCorrectedImage.Visibility = Visibility.Collapsed;
+        }
+
+        // Pre-commit: full state snapshot (watcher tracks background bitmap)
         long commitSeq = NextSeq();
         L(commitSeq,
             $"[GraphSource] PRE-COMMIT " +
-            $"prev={DescribeSource(GraphImage.Source)} -> new=WriteableBitmap({w}x{h}) " +
+            $"prev={DescribeSource(GraphImage.Source)} -> new=WriteableBitmap({w}x{h}) bg-only " +
             $"GraphContentGrid={GraphContentGrid.ActualWidth:F1}x{GraphContentGrid.ActualHeight:F1} " +
             $"GraphImage={GraphImage.ActualWidth:F1}x{GraphImage.ActualHeight:F1} " +
             $"IsLoaded={IsLoaded} Vis={Visibility} " +
             $"UIThread={IsUiThread} {TC}");
 
-        GraphImage.Source = bmp;
+        GraphImage.Source = bgBmp;
 
-        // Post-commit: verify Source reference survived the assignment
-        bool committed = ReferenceEquals(GraphImage.Source, bmp);
+        bool committed = ReferenceEquals(GraphImage.Source, bgBmp);
         long postSeq = NextSeq();
         L(postSeq,
             $"[GraphSource] POST-COMMIT " +
             $"Source={DescribeSource(GraphImage.Source)} " +
             $"refEqualsBmp={committed} origin=RenderGraph {TC}");
 
-        // Register with source watcher
-        _lastKnownSource    = bmp;
+        _lastKnownSource    = bgBmp;
         _lastKnownSourceSeq = commitSeq;
 
         // ── 7. Overlays ───────────────────────────────────────────────────
@@ -703,19 +759,88 @@ public partial class AnalysisPanel : UserControl
         L(NextSeq(), $"RenderGraph() EXIT-SUCCESS bitmap={w}×{h} token={_graphRedrawToken} {TC}");
     }
 
-    /// <summary>
-    /// Draws the pitch contour into the pixel buffer with maximum visibility.
-    /// Uses solid bright-green 3×3 blocks and connecting lines — no blending.
-    /// </summary>
-    private static void DrawContour(int[] pixels, int w, int h,
-        PitchPoint[] points, float totalTime,
-        int midiMin, int midiMax)
+    private static WriteableBitmap CommitPixelsToWriteableBitmap(int w, int h, int[] pixels)
     {
-        // ── solid bright green — impossible to miss ───────────────────────
-        const int ColGreen  = unchecked((int)0xFF00FF00);
-        const int ColGreen2 = unchecked((int)0xFF00CC00);
+        var bmp = new WriteableBitmap(w, h, 96, 96, PixelFormats.Bgra32, null);
+        bmp.Lock();
+        bmp.WritePixels(new Int32Rect(0, 0, w, h), pixels, w * 4, 0);
+        bmp.Unlock();
+        return bmp;
+    }
 
-        // ── ENTRY: scan incoming data ─────────────────────────────────────
+    /// <summary>Matches <see cref="Processing.Processors.PitchCorrectionProcessor"/> confidence gate.</summary>
+    private const float CorrectionConfidenceGate = 0.30f;
+
+    private static float MidiToHzProcessor(int midi)
+        => 440f * MathF.Pow(2f, (midi - 69f) / 12f);
+
+    /// <summary>
+    /// Per-frame target pitch after offline correction blend (Hz → same metadata as analysis).
+    /// Does not re-run WAV analysis.
+    /// </summary>
+    private PitchPoint[] BuildCorrectedVisualPitchTimeline(float strength)
+    {
+        strength = Math.Clamp(strength, 0f, 1f);
+        var arr = new PitchPoint[_points.Length];
+        for (int i = 0; i < _points.Length; i++)
+        {
+            PitchPoint p = _points[i];
+            if (!p.IsVoiced || p.Confidence < CorrectionConfidenceGate || strength == 0f)
+            {
+                arr[i] = p;
+                continue;
+            }
+
+            float targetHz   = MidiToHzProcessor(p.MidiNote);
+            float blendedHz  = p.FrequencyHz + (targetHz - p.FrequencyHz) * strength;
+            arr[i] = BuildPitchPointFromFrequency(p.TimeSeconds, blendedHz, p.Confidence);
+        }
+
+        return arr;
+    }
+
+    private static PitchPoint BuildPitchPointFromFrequency(float timeSeconds, float frequencyHz, float confidence)
+    {
+        if (frequencyHz <= 0f)
+        {
+            return new PitchPoint
+            {
+                TimeSeconds = timeSeconds,
+                FrequencyHz = 0f,
+                NoteName    = "--",
+                MidiNote    = -1,
+                CentsOffset = 0f,
+                Confidence  = confidence
+            };
+        }
+
+        double exactMidi   = 12.0 * Math.Log2(frequencyHz / 440.0) + 69.0;
+        int    roundedMidi = (int)Math.Round(exactMidi);
+        roundedMidi        = Math.Clamp(roundedMidi, 0, 127);
+        float centsOffset  = (float)((exactMidi - roundedMidi) * 100.0);
+        int    octave      = (roundedMidi / 12) - 1;
+        string[] names     = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"];
+        string noteName    = $"{names[roundedMidi % 12]}{octave}";
+
+        return new PitchPoint
+        {
+            TimeSeconds = timeSeconds,
+            FrequencyHz = frequencyHz,
+            NoteName    = noteName,
+            MidiNote    = roundedMidi,
+            CentsOffset  = centsOffset,
+            Confidence  = confidence
+        };
+    }
+
+    /// <summary>
+    /// Draws one contour layer into a BGRA buffer (transparent where empty). Same geometry as legacy contour.
+    /// </summary>
+    private static void DrawContourStyled(int[] pixels, int w, int h,
+        PitchPoint[] points, float totalTime,
+        int midiMin, int midiMax,
+        int colBlock, int colLine, int colLine2, int blockRadius, string tag)
+    {
         int entryVoiced = 0;
         int entryMidiLo = 999, entryMidiHi = -999;
         for (int ei = 0; ei < points.Length; ei++)
@@ -725,21 +850,22 @@ public partial class AnalysisPanel : UserControl
             if (points[ei].MidiNote < entryMidiLo) entryMidiLo = points[ei].MidiNote;
             if (points[ei].MidiNote > entryMidiHi) entryMidiHi = points[ei].MidiNote;
         }
+
         L(NextSeq(),
-            $"DrawContour() ENTRY points={points.Length} voiced={entryVoiced} " +
+            $"DrawContourStyled({tag}) ENTRY points={points.Length} voiced={entryVoiced} " +
             $"midiInData=[{(entryVoiced > 0 ? entryMidiLo : -1)},{(entryVoiced > 0 ? entryMidiHi : -1)}] " +
             $"graphWindow=[{midiMin},{midiMax}] totalTime={totalTime:F3}");
 
         bool havePrev = false;
         int  prevPx   = 0, prevPy = 0;
 
-        int cntTotal           = 0;
-        int cntVoiced          = 0;
-        int cntRejUnvoiced     = 0;
-        int cntRejLow          = 0;
-        int cntRejHigh         = 0;
-        int cntRendered        = 0;
-        int drawnSegments      = 0;
+        int cntTotal       = 0;
+        int cntVoiced      = 0;
+        int cntRejUnvoiced = 0;
+        int cntRejLow      = 0;
+        int cntRejHigh     = 0;
+        int cntRendered    = 0;
+        int drawnSegments  = 0;
         int minX = w, maxX = 0, minY = h, maxY = 0;
 
         for (int i = 0; i < points.Length; i++)
@@ -755,12 +881,14 @@ public partial class AnalysisPanel : UserControl
                 havePrev = false;
                 continue;
             }
+
             if (pt.MidiNote < midiMin)
             {
                 cntRejLow++;
                 havePrev = false;
                 continue;
             }
+
             if (pt.MidiNote > midiMax)
             {
                 cntRejHigh++;
@@ -780,24 +908,22 @@ public partial class AnalysisPanel : UserControl
             if (py < minY) minY = py;
             if (py > maxY) maxY = py;
 
-            // ── 3×3 block at each voiced point ───────────────────────────
-            for (int dy = -1; dy <= 1; dy++)
+            for (int dy = -blockRadius; dy <= blockRadius; dy++)
             {
                 int ry = py + dy;
                 if (ry < 0 || ry >= h) continue;
-                for (int dx = -1; dx <= 1; dx++)
+                for (int dx = -blockRadius; dx <= blockRadius; dx++)
                 {
                     int rx = px + dx;
                     if (rx >= 0 && rx < w)
-                        pixels[ry * w + rx] = ColGreen;
+                        pixels[ry * w + rx] = colBlock;
                 }
             }
 
-            // ── connecting line from previous point ───────────────────────
             if (havePrev)
             {
-                DrawLineBresenham(pixels, w, h, prevPx, prevPy,     px, py,     ColGreen);
-                DrawLineBresenham(pixels, w, h, prevPx, prevPy + 1, px, py + 1, ColGreen2);
+                DrawLineBresenham(pixels, w, h, prevPx, prevPy,     px, py,     colLine);
+                DrawLineBresenham(pixels, w, h, prevPx, prevPy + 1, px, py + 1, colLine2);
                 drawnSegments++;
             }
 
@@ -806,14 +932,13 @@ public partial class AnalysisPanel : UserControl
             prevPy   = py;
         }
 
-        // ── SUMMARY ───────────────────────────────────────────────────────
         L(NextSeq(),
-            $"DrawContour() EXIT total={cntTotal} voiced={cntVoiced} " +
+            $"DrawContourStyled({tag}) EXIT total={cntTotal} voiced={cntVoiced} " +
             $"rendered={cntRendered} segments={drawnSegments} " +
             $"rejUnvoiced={cntRejUnvoiced} rejLow={cntRejLow} rejHigh={cntRejHigh} " +
             $"midiRange=[{midiMin},{midiMax}] bitmap={w}×{h} " +
-            $"xRange=[{(minX<=maxX?minX:-1)},{(minX<=maxX?maxX:-1)}] " +
-            $"yRange=[{(minY<=maxY?minY:-1)},{(minY<=maxY?maxY:-1)}]");
+            $"xRange=[{(minX <= maxX ? minX : -1)},{(minX <= maxX ? maxX : -1)}] " +
+            $"yRange=[{(minY <= maxY ? minY : -1)},{(minY <= maxY ? maxY : -1)}]");
     }
 
     // ── Note-label overlay ────────────────────────────────────────────────
@@ -1013,9 +1138,11 @@ public partial class AnalysisPanel : UserControl
         if (outPath != null)
         {
             _correctedPath = outPath;
+            _correctedContourPoints = BuildCorrectedVisualPitchTimeline(strength);
             RenderProgress.Visibility = Visibility.Collapsed;
             CorrectionStatus.Text = $"Saved: {Path.GetFileName(outPath)}";
             PlayCorrectedButton.IsEnabled = true;
+            RenderGraph(_points);
         }
     }
 

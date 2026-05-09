@@ -273,12 +273,27 @@
                             ClipToBounds="True">
                         <!-- Graph stack: bitmap image + note-label overlay + playhead overlay Canvas -->
                         <Grid x:Name="GraphContentGrid">
+                            <!-- 1: grid/background only  2: original contour  3: corrected contour (static bitmaps) -->
                             <Image x:Name="GraphImage"
                                    Stretch="Fill"
                                    HorizontalAlignment="Stretch"
                                    VerticalAlignment="Stretch"
                                    RenderOptions.BitmapScalingMode="NearestNeighbor"/>
-                            <!-- Octave note labels overlay (C3, C4…) — sits between graph and playhead -->
+                            <Image x:Name="GraphContourOriginalImage"
+                                   Stretch="Fill"
+                                   HorizontalAlignment="Stretch"
+                                   VerticalAlignment="Stretch"
+                                   Opacity="0.86"
+                                   IsHitTestVisible="False"
+                                   RenderOptions.BitmapScalingMode="NearestNeighbor"/>
+                            <Image x:Name="GraphContourCorrectedImage"
+                                   Stretch="Fill"
+                                   HorizontalAlignment="Stretch"
+                                   VerticalAlignment="Stretch"
+                                   Visibility="Collapsed"
+                                   IsHitTestVisible="False"
+                                   RenderOptions.BitmapScalingMode="NearestNeighbor"/>
+                            <!-- Octave note labels overlay (C3, C4…) — above contour bitmaps -->
                             <Canvas x:Name="NoteLabelsCanvas"
                                     IsHitTestVisible="False"/>
                             <!-- Playhead: above contour (bitmap); clipped by ancestor borders -->
