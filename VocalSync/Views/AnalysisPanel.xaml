@@ -271,13 +271,25 @@
                     <Border Background="#FF111111"
                             CornerRadius="4"
                             ClipToBounds="True">
-                        <!-- Graph stack: bitmap image + note-label overlay + playhead overlay Canvas -->
+                        <!-- Graph stack: bg → blobs → contours → labels → playhead -->
                         <Grid x:Name="GraphContentGrid">
-                            <!-- 1: grid/background only  2: original contour  3: corrected contour (static bitmaps) -->
                             <Image x:Name="GraphImage"
                                    Stretch="Fill"
                                    HorizontalAlignment="Stretch"
                                    VerticalAlignment="Stretch"
+                                   RenderOptions.BitmapScalingMode="NearestNeighbor"/>
+                            <Image x:Name="GraphBlobOriginalImage"
+                                   Stretch="Fill"
+                                   HorizontalAlignment="Stretch"
+                                   VerticalAlignment="Stretch"
+                                   IsHitTestVisible="False"
+                                   RenderOptions.BitmapScalingMode="NearestNeighbor"/>
+                            <Image x:Name="GraphBlobCorrectedImage"
+                                   Stretch="Fill"
+                                   HorizontalAlignment="Stretch"
+                                   VerticalAlignment="Stretch"
+                                   Visibility="Collapsed"
+                                   IsHitTestVisible="False"
                                    RenderOptions.BitmapScalingMode="NearestNeighbor"/>
                             <Image x:Name="GraphContourOriginalImage"
                                    Stretch="Fill"

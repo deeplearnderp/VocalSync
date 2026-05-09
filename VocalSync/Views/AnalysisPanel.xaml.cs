@@ -461,6 +461,9 @@ public partial class AnalysisPanel : UserControl
         L(clearSrcSeq,
             $"[GraphSource] prev={DescribeSource(GraphImage.Source)} -> null REASON:Clear {TC}");
         GraphImage.Source = null;
+        GraphBlobOriginalImage.Source = null;
+        GraphBlobCorrectedImage.Source = null;
+        GraphBlobCorrectedImage.Visibility = Visibility.Collapsed;
         GraphContourOriginalImage.Source = null;
         GraphContourCorrectedImage.Source = null;
         GraphContourCorrectedImage.Visibility = Visibility.Collapsed;
@@ -656,6 +659,9 @@ public partial class AnalysisPanel : UserControl
 
         if (w < 2 || h < 2)
         {
+            GraphBlobOriginalImage.Source = null;
+            GraphBlobCorrectedImage.Source = null;
+            GraphBlobCorrectedImage.Visibility = Visibility.Collapsed;
             GraphContourOriginalImage.Source = null;
             GraphContourCorrectedImage.Source = null;
             GraphContourCorrectedImage.Visibility = Visibility.Collapsed;
@@ -723,6 +729,13 @@ public partial class AnalysisPanel : UserControl
             $"RenderGraph() range midiMin={midiMin} midiMax={midiMax} " +
             $"voicedInRange={voiced.Length} totalTime={_renderTotalSeconds:F3}s {TC}");
 
+        bool showCorrectedLayer = _showCorrectedContour
+            && _correctedContourPoints != null
+            && _correctedContourPoints.Length == points.Length
+            && points.Length > 0
+            && !string.IsNullOrEmpty(_correctedPath)
+            && File.Exists(_correctedPath);
+
         var pixels = new int[w * h];
         Array.Fill(pixels, ColBackground);
 
@@ -788,9 +801,32 @@ public partial class AnalysisPanel : UserControl
         }
 
         // ── 5. Background bitmap only (no contour on this layer) ─────────
-        // ── 6. Static contour bitmaps (original + optional corrected) ─────
         WriteableBitmap bgBmp = CommitPixelsToWriteableBitmap(w, h, pixels);
 
+        // ── 5b. Note blobs (same Z-order as XAML: behind contour bitmaps) ─
+        if (points.Length > 0)
+        {
+            List<NoteRegion> origRegions = BuildNoteRegions(points, midiMin, midiMax);
+            GraphBlobOriginalImage.Source = RenderBlobBitmap(origRegions, w, h, midiMin, midiMax, corrected: false);
+        }
+        else
+        {
+            GraphBlobOriginalImage.Source = null;
+        }
+
+        if (showCorrectedLayer)
+        {
+            List<NoteRegion> corrRegions = BuildNoteRegions(_correctedContourPoints!, midiMin, midiMax);
+            GraphBlobCorrectedImage.Source = RenderBlobBitmap(corrRegions, w, h, midiMin, midiMax, corrected: true);
+            GraphBlobCorrectedImage.Visibility = Visibility.Visible;
+        }
+        else
+        {
+            GraphBlobCorrectedImage.Source = null;
+            GraphBlobCorrectedImage.Visibility = Visibility.Collapsed;
+        }
+
+        // ── 6. Static contour bitmaps (original + optional corrected) ─────
         if (_showOriginalContour && points.Length > 0)
         {
             var origLayer = new int[w * h];
@@ -806,13 +842,6 @@ public partial class AnalysisPanel : UserControl
         {
             GraphContourOriginalImage.Source = null;
         }
-
-        bool showCorrectedLayer = _showCorrectedContour
-            && _correctedContourPoints != null
-            && _correctedContourPoints.Length == points.Length
-            && points.Length > 0
-            && !string.IsNullOrEmpty(_correctedPath)
-            && File.Exists(_correctedPath);
 
         if (showCorrectedLayer)
         {
@@ -868,6 +897,145 @@ public partial class AnalysisPanel : UserControl
         bmp.WritePixels(new Int32Rect(0, 0, w, h), pixels, w * 4, 0);
         bmp.Unlock();
         return bmp;
+    }
+
+    /// <summary>
+    /// Translucent Melodyne-style note blobs (time vs MIDI) into a transparent bitmap.
+    /// Horizontal scale matches <see cref="DrawContourStyled"/>; vertical band uses <see cref="MidiToY"/>.
+    /// </summary>
+    private WriteableBitmap RenderBlobBitmap(
+        List<NoteRegion> regions,
+        int w,
+        int h,
+        int midiMin,
+        int midiMax,
+        bool corrected)
+    {
+        var pixels = new int[w * h];
+        float tt = Math.Max(_renderTotalSeconds, 1e-4f);
+
+        foreach (NoteRegion region in regions)
+        {
+            int ya = MidiToY(region.Midi, h, midiMin, midiMax);
+            int yb = region.Midi < midiMax
+                ? MidiToY(region.Midi + 1, h, midiMin, midiMax)
+                : MidiToY(region.Midi - 1, h, midiMin, midiMax);
+            int yTop = Math.Clamp(Math.Min(ya, yb), 0, h - 1);
+            int yBot = Math.Clamp(Math.Max(ya, yb), 0, h - 1);
+            if (yBot - yTop < 1)
+            {
+                int mid = Math.Clamp((yTop + yBot) / 2, 0, h - 1);
+                yTop = Math.Clamp(mid - 1, 0, h - 1);
+                yBot = Math.Clamp(mid + 1, 0, h - 1);
+            }
+
+            int px0 = (int)(region.StartTime / tt * (w - 1));
+            int px1 = (int)(region.EndTime / tt * (w - 1));
+            px0 = Math.Clamp(px0, 0, w - 1);
+            px1 = Math.Clamp(px1, 0, w - 1);
+            if (px1 < px0)
+                (px0, px1) = (px1, px0);
+            if (px1 == px0)
+                px1 = Math.Min(w - 1, px0 + 1);
+
+            int alpha = Math.Clamp((int)(52 + region.AverageConfidence * 130), 36, 180);
+            int sr, sg, sb;
+            if (corrected)
+            {
+                sr = 0x28;
+                sg = 0xC4;
+                sb = 0xF0;
+            }
+            else
+            {
+                sr = 0x38;
+                sg = 0x90;
+                sb = 0x6C;
+            }
+
+            int fill = (alpha << 24) | (sr << 16) | (sg << 8) | sb;
+            int bandH = yBot - yTop + 1;
+            int bandW = px1 - px0 + 1;
+            int radius = Math.Clamp(Math.Min(bandW, bandH) / 3, 2, 14);
+            FillRoundedRectBlobBlend(pixels, w, h, px0, yTop, px1, yBot, radius, fill);
+        }
+
+        return CommitPixelsToWriteableBitmap(w, h, pixels);
+    }
+
+    private static int BlobDistSq(int ax, int ay, int bx, int by)
+    {
+        int dx = ax - bx;
+        int dy = ay - by;
+        return dx * dx + dy * dy;
+    }
+
+    private static bool InsideBlobRoundedRect(int x, int y, int left, int top, int right, int bottom, int radius)
+    {
+        if (x < left || x > right || y < top || y > bottom)
+            return false;
+
+        int rw = right - left + 1;
+        int rh = bottom - top + 1;
+        int r = Math.Min(radius, Math.Min(rw, rh) / 2);
+        if (r <= 0)
+            return true;
+
+        if (x < left + r && y < top + r)
+            return BlobDistSq(x, y, left + r, top + r) <= r * r;
+        if (x > right - r && y < top + r)
+            return BlobDistSq(x, y, right - r, top + r) <= r * r;
+        if (x < left + r && y > bottom - r)
+            return BlobDistSq(x, y, left + r, bottom - r) <= r * r;
+        if (x > right - r && y > bottom - r)
+            return BlobDistSq(x, y, right - r, bottom - r) <= r * r;
+        return true;
+    }
+
+    private static void BlobBlendOver(int[] pixels, int idx, int srcArgb)
+    {
+        int sa = (srcArgb >> 24) & 0xFF;
+        if (sa == 0)
+            return;
+
+        int dst = pixels[idx];
+        int da = (dst >> 24) & 0xFF;
+        int sr = (srcArgb >> 16) & 0xFF, sg = (srcArgb >> 8) & 0xFF, sb = srcArgb & 0xFF;
+        int dr = (dst >> 16) & 0xFF, dg = (dst >> 8) & 0xFF, db = dst & 0xFF;
+
+        float a = sa / 255f;
+        float inv = 1f - a;
+        int oa = Math.Min(255, sa + (int)(da * inv));
+        int or = (int)(sr * a + dr * inv);
+        int og = (int)(sg * a + dg * inv);
+        int ob = (int)(sb * a + db * inv);
+        pixels[idx] = (oa << 24) | (Math.Clamp(or, 0, 255) << 16)
+                                  | (Math.Clamp(og, 0, 255) << 8)
+                                  | Math.Clamp(ob, 0, 255);
+    }
+
+    private static void FillRoundedRectBlobBlend(int[] pixels, int w, int h,
+        int left, int top, int right, int bottom, int radius, int fillArgb)
+    {
+        left   = Math.Clamp(left,   0, w - 1);
+        right  = Math.Clamp(right,  0, w - 1);
+        top    = Math.Clamp(top,    0, h - 1);
+        bottom = Math.Clamp(bottom, 0, h - 1);
+        if (right < left)
+            (left, right) = (right, left);
+        if (bottom < top)
+            (top, bottom) = (bottom, top);
+
+        for (int y = top; y <= bottom; y++)
+        {
+            int row = y * w;
+            for (int x = left; x <= right; x++)
+            {
+                if (!InsideBlobRoundedRect(x, y, left, top, right, bottom, radius))
+                    continue;
+                BlobBlendOver(pixels, row + x, fillArgb);
+            }
+        }
     }
 
     /// <summary>Matches <see cref="Processing.Processors.PitchCorrectionProcessor"/> confidence gate.</summary>
