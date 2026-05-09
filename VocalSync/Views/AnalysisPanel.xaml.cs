@@ -136,27 +136,45 @@ public partial class AnalysisPanel : UserControl
                 pixels[y * w + x] = col;
         }
 
-        if (points.Length > 1)
+        if (points.Length > 0)
         {
-            float totalTime = points[^1].TimeSeconds;
+            float totalTime = points.Length > 1 ? points[^1].TimeSeconds : 0f;
             if (totalTime <= 0f) totalTime = 1f;
 
-            foreach (var pt in points)
+            // Thin pitch contour: connect consecutive in-range voiced frames; gaps at unvoiced runs.
+            bool havePrev = false;
+            int prevPx = 0, prevPy = 0;
+            float prevConf = 0f;
+
+            for (int i = 0; i < points.Length; i++)
             {
-                if (!pt.IsVoiced) continue;
-                if (pt.MidiNote < MidiYMin || pt.MidiNote > MidiYMax) continue;
+                PitchPoint pt = points[i];
+                if (!pt.IsVoiced || pt.MidiNote < MidiYMin || pt.MidiNote > MidiYMax)
+                {
+                    havePrev = false;
+                    continue;
+                }
 
                 int px = (int)((pt.TimeSeconds / totalTime) * (w - 1));
                 int py = MidiToY(pt.MidiNote, h);
-                int dotColour = BlendColour(ColDotLow, ColDotHigh, pt.Confidence);
 
-                for (int dy = -1; dy <= 1; dy++)
-                for (int dx = -1; dx <= 1; dx++)
+                if (havePrev)
                 {
-                    int ix = px + dx, iy = py + dy;
-                    if (ix >= 0 && ix < w && iy >= 0 && iy < h)
-                        pixels[iy * w + ix] = dotColour;
+                    int col = BlendColour(ColDotLow, ColDotHigh, (prevConf + pt.Confidence) * 0.5f);
+                    DrawLineBresenham(pixels, w, h, prevPx, prevPy, px, py, col);
                 }
+                else
+                {
+                    // Segment start: single sample as a 1px anchor (readable when isolated)
+                    int col = BlendColour(ColDotLow, ColDotHigh, pt.Confidence);
+                    if (px >= 0 && px < w && py >= 0 && py < h)
+                        pixels[py * w + px] = col;
+                }
+
+                havePrev = true;
+                prevPx = px;
+                prevPy = py;
+                prevConf = pt.Confidence;
             }
         }
 
@@ -267,6 +285,36 @@ public partial class AnalysisPanel : UserControl
                 "VocalSync — Correction",
                 MessageBoxButton.OK,
                 MessageBoxImage.Error);
+        }
+    }
+
+    /// <summary>1px Bresenham line on a BGRA32 buffer (pitch contour only — no fills).</summary>
+    private static void DrawLineBresenham(int[] pixels, int width, int height, int x0, int y0, int x1, int y1, int color)
+    {
+        int dx = Math.Abs(x1 - x0);
+        int dy = -Math.Abs(y1 - y0);
+        int sx = x0 < x1 ? 1 : -1;
+        int sy = y0 < y1 ? 1 : -1;
+        int err = dx + dy;
+
+        while (true)
+        {
+            if (x0 >= 0 && x0 < width && y0 >= 0 && y0 < height)
+                pixels[y0 * width + x0] = color;
+
+            if (x0 == x1 && y0 == y1) break;
+
+            int e2 = err * 2;
+            if (e2 >= dy)
+            {
+                err += dy;
+                x0 += sx;
+            }
+            if (e2 <= dx)
+            {
+                err += dx;
+                y0 += sy;
+            }
         }
     }
 
