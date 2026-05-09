@@ -189,11 +189,14 @@
         </Border>
 
         <!-- HEADER + timeline + GRAPH + LEGEND -->
-        <Grid UseLayoutRounding="True">
+        <!-- DEBUG: Background="#2200FF00" = semi-transparent green on the outer grid -->
+        <Grid x:Name="OuterLayoutGrid" UseLayoutRounding="True"
+              Background="#2200FF00">
             <Grid.RowDefinitions>
                 <RowDefinition Height="Auto"/>
                 <RowDefinition Height="Auto"/>
-                <RowDefinition Height="*" MinHeight="160"/>
+                <!-- DEBUG Phase 1: was Height="*" MinHeight="160" — forced fixed to prove star sizing -->
+                <RowDefinition Height="300"/>
                 <RowDefinition Height="Auto"/>
             </Grid.RowDefinitions>
 
@@ -240,9 +243,9 @@
                     </Border>
                 </Grid>
 
-                <!-- Lightweight timeline strip (visual divisions only — no interaction) -->
+                <!-- Timeline strip: code-driven ticks via TimelineCanvas -->
                 <Border Grid.Row="1"
-                        Height="20"
+                        Height="22"
                         Margin="0,2,0,0"
                         Background="#FF151515"
                         BorderBrush="#FF2C2C2C"
@@ -250,51 +253,63 @@
                         CornerRadius="4,4,0,0"
                         SnapsToDevicePixels="True"
                         ClipToBounds="True">
-                    <Grid Margin="6,3,6,2">
-                        <Rectangle Height="1"
-                                   VerticalAlignment="Bottom"
-                                   Margin="0,0,0,1"
-                                   Fill="#FF3D3D3D"
-                                   HorizontalAlignment="Stretch"/>
-                        <UniformGrid Rows="1" Columns="16" VerticalAlignment="Bottom" Height="9" Margin="0,0,0,2">
-                            <Rectangle Width="1" HorizontalAlignment="Center" Fill="#FF404040" Margin="0,2,0,0"/>
-                            <Rectangle Width="1" HorizontalAlignment="Center" Fill="#FF404040" Margin="0,2,0,0"/>
-                            <Rectangle Width="1" HorizontalAlignment="Center" Fill="#FF404040" Margin="0,2,0,0"/>
-                            <Rectangle Width="1" HorizontalAlignment="Center" Fill="#FF404040" Margin="0,2,0,0"/>
-                            <Rectangle Width="1" HorizontalAlignment="Center" Fill="#FF404040" Margin="0,2,0,0"/>
-                            <Rectangle Width="1" HorizontalAlignment="Center" Fill="#FF404040" Margin="0,2,0,0"/>
-                            <Rectangle Width="1" HorizontalAlignment="Center" Fill="#FF404040" Margin="0,2,0,0"/>
-                            <Rectangle Width="1" HorizontalAlignment="Center" Fill="#FF404040" Margin="0,2,0,0"/>
-                            <Rectangle Width="1" HorizontalAlignment="Center" Fill="#FF404040" Margin="0,2,0,0"/>
-                            <Rectangle Width="1" HorizontalAlignment="Center" Fill="#FF404040" Margin="0,2,0,0"/>
-                            <Rectangle Width="1" HorizontalAlignment="Center" Fill="#FF404040" Margin="0,2,0,0"/>
-                            <Rectangle Width="1" HorizontalAlignment="Center" Fill="#FF404040" Margin="0,2,0,0"/>
-                            <Rectangle Width="1" HorizontalAlignment="Center" Fill="#FF404040" Margin="0,2,0,0"/>
-                            <Rectangle Width="1" HorizontalAlignment="Center" Fill="#FF404040" Margin="0,2,0,0"/>
-                            <Rectangle Width="1" HorizontalAlignment="Center" Fill="#FF404040" Margin="0,2,0,0"/>
-                            <Rectangle Width="1" HorizontalAlignment="Center" Fill="#FF404040" Margin="0,2,0,0"/>
-                        </UniformGrid>
-                    </Grid>
+                    <Canvas x:Name="TimelineCanvas"
+                            IsHitTestVisible="False"
+                            SizeChanged="TimelineCanvas_SizeChanged"/>
                 </Border>
 
                 <!-- Graph: framed plot area -->
-                <Border Grid.Row="2"
-                        Background="#FF0E0E0E"
+                <!-- DEBUG Phase 2: Height="300" MinHeight="300" forced; Background="#22FF0000" red debug -->
+                <Border x:Name="GraphBorder"
+                        Grid.Row="2"
+                        Background="#22FF0000"
                         BorderBrush="#FF383838"
                         BorderThickness="1"
                         CornerRadius="6"
                         Padding="2"
                         ClipToBounds="True"
                         VerticalAlignment="Stretch"
-                        MinHeight="160"
                         HorizontalAlignment="Stretch"
+                        Height="300"
+                        MinHeight="300"
                         SnapsToDevicePixels="True">
                     <Border Background="#FF111111"
                             CornerRadius="4"
                             ClipToBounds="True">
-                    <Image x:Name="GraphImage"
-                           Stretch="Fill"
-                           RenderOptions.BitmapScalingMode="NearestNeighbor"/>
+                        <!-- Graph stack: bitmap image + note-label overlay + playhead overlay Canvas -->
+                        <!-- DEBUG Phase 4: blue background on GraphContentGrid -->
+                        <Grid x:Name="GraphContentGrid"
+                              Background="#220000FF">
+                            <!-- DEBUG Phase 3: Width/Height forced; Phase 4: cyan Background on Image -->
+                            <Image x:Name="GraphImage"
+                                   Stretch="Fill"
+                                   Width="600"
+                                   Height="300"
+                                   HorizontalAlignment="Stretch"
+                                   VerticalAlignment="Stretch"
+                                   RenderOptions.BitmapScalingMode="NearestNeighbor"/>
+                            <!-- Octave note labels overlay (C3, C4…) — sits between graph and playhead -->
+                            <Canvas x:Name="NoteLabelsCanvas"
+                                    IsHitTestVisible="False"/>
+                            <!-- Playhead overlay: clipped to graph bounds automatically by parent ClipToBounds -->
+                            <Canvas x:Name="PlayheadCanvas"
+                                    IsHitTestVisible="False"
+                                    Visibility="Collapsed">
+                                <!-- Soft glow: wider, dim, behind the sharp line -->
+                                <Line x:Name="PlayheadGlow"
+                                      Y1="0" Y2="2000"
+                                      Stroke="#40FFFFFF"
+                                      StrokeThickness="3"
+                                      IsHitTestVisible="False"/>
+                                <!-- Sharp cursor line -->
+                                <Line x:Name="PlayheadLine"
+                                      Y1="0" Y2="2000"
+                                      Stroke="#FFFFFFFF"
+                                      StrokeThickness="1"
+                                      IsHitTestVisible="False"
+                                      SnapsToDevicePixels="True"/>
+                            </Canvas>
+                        </Grid>
                     </Border>
                 </Border>
 
