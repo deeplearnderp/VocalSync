@@ -538,15 +538,12 @@
                        ToolTip="{Binding PlaybackTargetPath}"/>
         </Grid>
 
-        <!-- Workspace: embedded analysis (replaces popup window) -->
+        <!-- Workspace: analysis panel sizes itself; scrolling is internal to graph/header region only -->
         <Border Grid.Row="8"
                 Margin="12,8,8,0"
                 Padding="12,0,12,0"
                 Background="Transparent">
-            <ScrollViewer VerticalScrollBarVisibility="Auto"
-                          HorizontalScrollBarVisibility="Disabled">
-                <views:AnalysisPanel x:Name="WorkspacePanel"/>
-            </ScrollViewer>
+            <views:AnalysisPanel x:Name="WorkspacePanel" VerticalAlignment="Stretch"/>
         </Border>
 
         <!-- Start/Stop capture -->

@@ -4,76 +4,11 @@
              Background="Transparent"
              Foreground="#FFFFFFFF">
 
-    <Grid Margin="0,10,0,0">
-        <Grid.RowDefinitions>
-            <RowDefinition Height="Auto"/>
-            <RowDefinition Height="*" MinHeight="160"/>
-            <RowDefinition Height="Auto"/>
-            <RowDefinition Height="Auto"/>
-        </Grid.RowDefinitions>
+    <!-- Correction docked bottom (never scrolled). Header + graph + legend scroll only if vertical space is tight. -->
+    <DockPanel Margin="0,10,0,0" LastChildFill="True">
 
-        <!-- Header -->
-        <Grid Grid.Row="0" Margin="0,0,0,8">
-            <Grid.ColumnDefinitions>
-                <ColumnDefinition Width="*"/>
-                <ColumnDefinition Width="Auto"/>
-            </Grid.ColumnDefinitions>
-
-            <StackPanel Grid.Column="0" Orientation="Vertical">
-                <TextBlock x:Name="FileNameText"
-                           FontFamily="Segoe UI"
-                           FontSize="12"
-                           FontWeight="SemiBold"
-                           Foreground="#FFCCCCCC"
-                           Text="—"/>
-                <TextBlock x:Name="StatsText"
-                           FontFamily="Segoe UI"
-                           FontSize="10"
-                           Foreground="#FF666666"
-                           Margin="0,2,0,0"
-                           Text="Select a recording in the library"/>
-            </StackPanel>
-
-            <Border Grid.Column="1"
-                    Background="#FF1A1A1A"
-                    BorderBrush="#FF2A2A2A"
-                    BorderThickness="1"
-                    CornerRadius="4"
-                    Padding="10,4"
-                    VerticalAlignment="Center">
-                <TextBlock x:Name="VoicedBadge"
-                           FontFamily="Segoe UI"
-                           FontSize="11"
-                           Foreground="#FF888888"
-                           Text="—"/>
-            </Border>
-        </Grid>
-
-        <!-- Pitch graph -->
-        <Border Grid.Row="1"
-                Background="#FF121212"
-                CornerRadius="6"
-                ClipToBounds="True">
-            <Image x:Name="GraphImage"
-                   Stretch="Fill"
-                   RenderOptions.BitmapScalingMode="NearestNeighbor"/>
-        </Border>
-
-        <!-- Legend -->
-        <StackPanel Grid.Row="2" Orientation="Horizontal" VerticalAlignment="Center" Margin="0,8,0,0">
-            <Ellipse Width="8" Height="8" Fill="#FF1DB954" Margin="0,0,4,0" VerticalAlignment="Center"/>
-            <TextBlock Text="Voiced (high confidence)"
-                       FontFamily="Segoe UI" FontSize="10" Foreground="#FF555555" Margin="0,0,16,0" VerticalAlignment="Center"/>
-            <Ellipse Width="8" Height="8" Fill="#FF555555" Margin="0,0,4,0" VerticalAlignment="Center"/>
-            <TextBlock Text="Voiced (low confidence)"
-                       FontFamily="Segoe UI" FontSize="10" Foreground="#FF555555" Margin="0,0,16,0" VerticalAlignment="Center"/>
-            <Rectangle Width="20" Height="2" Fill="#FF1E1E1E" Margin="0,0,4,0" VerticalAlignment="Center"/>
-            <TextBlock Text="Semitone grid"
-                       FontFamily="Segoe UI" FontSize="10" Foreground="#FF555555" VerticalAlignment="Center"/>
-        </StackPanel>
-
-        <!-- Correction panel -->
-        <Border Grid.Row="3"
+        <!-- CONTROL AREA: always measured first, stays visible at bottom of panel -->
+        <Border DockPanel.Dock="Bottom"
                 Background="#FF0A0A0A"
                 BorderBrush="#FF1E1E1E"
                 BorderThickness="1"
@@ -251,5 +186,73 @@
                 </Grid>
             </Grid>
         </Border>
-    </Grid>
+
+        <!-- HEADER + GRAPH + LEGEND: only this region scrolls when height is constrained -->
+        <ScrollViewer VerticalScrollBarVisibility="Auto"
+                      HorizontalScrollBarVisibility="Disabled"
+                      Padding="0,0,2,0">
+            <StackPanel>
+                <!-- Header -->
+                <Grid Margin="0,0,0,8">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*"/>
+                        <ColumnDefinition Width="Auto"/>
+                    </Grid.ColumnDefinitions>
+
+                    <StackPanel Grid.Column="0" Orientation="Vertical">
+                        <TextBlock x:Name="FileNameText"
+                                   FontFamily="Segoe UI"
+                                   FontSize="12"
+                                   FontWeight="SemiBold"
+                                   Foreground="#FFCCCCCC"
+                                   Text="—"/>
+                        <TextBlock x:Name="StatsText"
+                                   FontFamily="Segoe UI"
+                                   FontSize="10"
+                                   Foreground="#FF666666"
+                                   Margin="0,2,0,0"
+                                   TextWrapping="Wrap"
+                                   Text="Select a recording in the library"/>
+                    </StackPanel>
+
+                    <Border Grid.Column="1"
+                            Background="#FF1A1A1A"
+                            BorderBrush="#FF2A2A2A"
+                            BorderThickness="1"
+                            CornerRadius="4"
+                            Padding="10,4"
+                            VerticalAlignment="Top">
+                        <TextBlock x:Name="VoicedBadge"
+                                   FontFamily="Segoe UI"
+                                   FontSize="11"
+                                   Foreground="#FF888888"
+                                   Text="—"/>
+                    </Border>
+                </Grid>
+
+                <!-- Graph: fixed height (no * row — avoids unbounded stretch inside parent) -->
+                <Border Height="240"
+                        Background="#FF121212"
+                        CornerRadius="6"
+                        ClipToBounds="True">
+                    <Image x:Name="GraphImage"
+                           Stretch="Fill"
+                           RenderOptions.BitmapScalingMode="NearestNeighbor"/>
+                </Border>
+
+                <!-- Legend -->
+                <StackPanel Orientation="Horizontal" VerticalAlignment="Center" Margin="0,8,0,0">
+                    <Ellipse Width="8" Height="8" Fill="#FF1DB954" Margin="0,0,4,0" VerticalAlignment="Center"/>
+                    <TextBlock Text="Voiced (high confidence)"
+                               FontFamily="Segoe UI" FontSize="10" Foreground="#FF555555" Margin="0,0,16,0" VerticalAlignment="Center"/>
+                    <Ellipse Width="8" Height="8" Fill="#FF555555" Margin="0,0,4,0" VerticalAlignment="Center"/>
+                    <TextBlock Text="Voiced (low confidence)"
+                               FontFamily="Segoe UI" FontSize="10" Foreground="#FF555555" Margin="0,0,16,0" VerticalAlignment="Center"/>
+                    <Rectangle Width="20" Height="2" Fill="#FF1E1E1E" Margin="0,0,4,0" VerticalAlignment="Center"/>
+                    <TextBlock Text="Semitone grid"
+                               FontFamily="Segoe UI" FontSize="10" Foreground="#FF555555" VerticalAlignment="Center"/>
+                </StackPanel>
+            </StackPanel>
+        </ScrollViewer>
+    </DockPanel>
 </UserControl>
