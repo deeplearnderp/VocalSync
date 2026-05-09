@@ -187,16 +187,16 @@
             </Grid>
         </Border>
 
-        <!-- HEADER + GRAPH + LEGEND: graph row is * but MaxHeight-capped so metadata/legend/correction never squeeze -->
+        <!-- HEADER + GRAPH + LEGEND: graph row * fills space between header and legend; graph border stretches (no top-capped void) -->
         <Grid UseLayoutRounding="True">
             <Grid.RowDefinitions>
                 <RowDefinition Height="Auto"/>
-                <RowDefinition Height="*" MinHeight="120" MaxHeight="280"/>
+                <RowDefinition Height="*" MinHeight="160"/>
                 <RowDefinition Height="Auto"/>
             </Grid.RowDefinitions>
 
                 <!-- Header -->
-                <Grid Grid.Row="0" Margin="0,0,0,6" VerticalAlignment="Top">
+                <Grid Grid.Row="0" Margin="0,0,0,4" VerticalAlignment="Top">
                     <Grid.ColumnDefinitions>
                         <ColumnDefinition Width="*"/>
                         <ColumnDefinition Width="Auto"/>
@@ -238,25 +238,24 @@
                     </Border>
                 </Grid>
 
-                <!-- Graph: flexes with splitter/window but bounded (row + border MaxHeight) -->
+                <!-- Graph: dominant band — stretches to full * row height (workspace / splitter elastic) -->
                 <Border Grid.Row="1"
                         Background="#FF121212"
                         CornerRadius="6"
                         ClipToBounds="True"
-                        VerticalAlignment="Top"
-                        MinHeight="120"
-                        MaxHeight="280"
+                        VerticalAlignment="Stretch"
+                        MinHeight="160"
                         HorizontalAlignment="Stretch">
                     <Image x:Name="GraphImage"
                            Stretch="Fill"
                            RenderOptions.BitmapScalingMode="NearestNeighbor"/>
                 </Border>
 
-                <!-- Legend -->
+                <!-- Legend: tight under graph -->
                 <StackPanel Grid.Row="2"
                             Orientation="Horizontal"
                             VerticalAlignment="Top"
-                            Margin="0,6,0,0">
+                            Margin="0,2,0,0">
                     <Ellipse Width="8" Height="8" Fill="#FF1DB954" Margin="0,0,4,0" VerticalAlignment="Center"/>
                     <TextBlock Text="Voiced (high confidence)"
                                FontFamily="Segoe UI" FontSize="10" Foreground="#FF555555" Margin="0,0,16,0" VerticalAlignment="Center"/>
