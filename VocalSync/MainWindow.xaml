@@ -106,7 +106,7 @@
         <!-- Level meter ProgressBar style -->
         <Style x:Key="LevelMeterStyle" TargetType="ProgressBar">
             <Setter Property="Height" Value="6"/>
-            <Setter Property="Margin" Value="20,0"/>
+            <Setter Property="Margin" Value="18,0"/>
             <Setter Property="BorderThickness" Value="0"/>
             <Setter Property="Background" Value="#FF1E1E1E"/>
             <Setter Property="Foreground" Value="#FF1DB954"/>
@@ -329,7 +329,7 @@
                        FontWeight="SemiBold"
                        Foreground="#FF444444"
                        HorizontalAlignment="Left"
-                       Margin="22,0,0,1"/>
+                       Margin="18,0,0,1"/>
             <ProgressBar x:Name="LevelMeter"
                          Style="{StaticResource LevelMeterStyle}"
                          Minimum="0" Maximum="1"
@@ -341,15 +341,23 @@
                 Height="36"
                 MinHeight="36"
                 MaxHeight="36"
-                Margin="16,0,16,2"
+                Margin="14,0,14,2"
                 CornerRadius="6"
-                Background="#FF0D0D0D"
-                ClipToBounds="True">
+                Background="#FF080808"
+                BorderBrush="#FF262626"
+                BorderThickness="1"
+                Padding="2"
+                ClipToBounds="True"
+                SnapsToDevicePixels="True">
+            <Border Background="#FF0D0D0D"
+                    CornerRadius="4"
+                    ClipToBounds="True">
             <views:SignalVisualizer x:Name="Visualizer"/>
+            </Border>
         </Border>
 
         <!-- Device selector -->
-        <Grid Grid.Row="5" Margin="16,2,16,2">
+        <Grid Grid.Row="5" Margin="14,2,14,2">
             <Grid.ColumnDefinitions>
                 <ColumnDefinition Width="Auto"/>
                 <ColumnDefinition Width="*"/>
@@ -385,7 +393,7 @@
 
         <!-- Monitor controls -->
         <!-- ⚠ Use headphones to avoid microphone feedback when monitoring is enabled -->
-        <Grid Grid.Row="6" Margin="16,1,16,1">
+        <Grid Grid.Row="6" Margin="14,1,14,1">
             <Grid.ColumnDefinitions>
                 <ColumnDefinition Width="Auto"/>
                 <ColumnDefinition Width="Auto"/>
@@ -437,7 +445,7 @@
         </Grid>
 
         <!-- Recording controls (live) — playback uses library selection or last take -->
-        <Grid Grid.Row="7" Margin="16,1,16,2">
+        <Grid Grid.Row="7" Margin="14,1,14,2">
             <Grid.ColumnDefinitions>
                 <ColumnDefinition Width="Auto"/>
                 <ColumnDefinition Width="Auto"/>

@@ -4,17 +4,18 @@
              Background="Transparent"
              Foreground="#FFFFFFFF">
 
-    <!-- Correction docked bottom. Header + graph + legend fill remaining height (no scroll). -->
-    <DockPanel Margin="0,4,0,0" LastChildFill="True">
+    <!-- Correction docked bottom. Header + timeline + graph + legend fill remaining height (no scroll). -->
+    <DockPanel Margin="0,2,0,0" LastChildFill="True">
 
         <!-- CONTROL AREA: always measured first, stays visible at bottom of panel -->
         <Border DockPanel.Dock="Bottom"
                 Background="#FF0A0A0A"
-                BorderBrush="#FF1E1E1E"
+                BorderBrush="#FF262626"
                 BorderThickness="1"
                 CornerRadius="6"
-                Margin="0,6,0,0"
-                Padding="14,10">
+                Margin="0,8,0,0"
+                Padding="14,12"
+                SnapsToDevicePixels="True">
             <Grid>
                 <Grid.RowDefinitions>
                     <RowDefinition Height="Auto"/>
@@ -22,7 +23,7 @@
                     <RowDefinition Height="Auto"/>
                 </Grid.RowDefinitions>
 
-                <Grid Grid.Row="0" Margin="0,0,0,8">
+                <Grid Grid.Row="0" Margin="0,0,0,6">
                     <Grid.ColumnDefinitions>
                         <ColumnDefinition Width="Auto"/>
                         <ColumnDefinition Width="*"/>
@@ -160,7 +161,7 @@
                     </Button>
                 </Grid>
 
-                <Grid Grid.Row="2" Margin="0,8,0,0">
+                <Grid Grid.Row="2" Margin="0,6,0,0">
                     <Grid.ColumnDefinitions>
                         <ColumnDefinition Width="*"/>
                         <ColumnDefinition Width="Auto"/>
@@ -187,16 +188,17 @@
             </Grid>
         </Border>
 
-        <!-- HEADER + GRAPH + LEGEND: graph row * fills space between header and legend; graph border stretches (no top-capped void) -->
+        <!-- HEADER + timeline + GRAPH + LEGEND -->
         <Grid UseLayoutRounding="True">
             <Grid.RowDefinitions>
+                <RowDefinition Height="Auto"/>
                 <RowDefinition Height="Auto"/>
                 <RowDefinition Height="*" MinHeight="160"/>
                 <RowDefinition Height="Auto"/>
             </Grid.RowDefinitions>
 
                 <!-- Header -->
-                <Grid Grid.Row="0" Margin="0,0,0,4" VerticalAlignment="Top">
+                <Grid Grid.Row="0" Margin="0,0,0,6" VerticalAlignment="Top">
                     <Grid.ColumnDefinitions>
                         <ColumnDefinition Width="*"/>
                         <ColumnDefinition Width="Auto"/>
@@ -225,10 +227,10 @@
 
                     <Border Grid.Column="1"
                             Background="#FF1A1A1A"
-                            BorderBrush="#FF2A2A2A"
+                            BorderBrush="#FF333333"
                             BorderThickness="1"
                             CornerRadius="4"
-                            Padding="10,4"
+                            Padding="10,5"
                             VerticalAlignment="Top">
                         <TextBlock x:Name="VoicedBadge"
                                    FontFamily="Segoe UI"
@@ -238,34 +240,85 @@
                     </Border>
                 </Grid>
 
-                <!-- Graph: dominant band — stretches to full * row height (workspace / splitter elastic) -->
+                <!-- Lightweight timeline strip (visual divisions only — no interaction) -->
                 <Border Grid.Row="1"
-                        Background="#FF121212"
+                        Height="20"
+                        Margin="0,2,0,0"
+                        Background="#FF151515"
+                        BorderBrush="#FF2C2C2C"
+                        BorderThickness="1"
+                        CornerRadius="4,4,0,0"
+                        SnapsToDevicePixels="True"
+                        ClipToBounds="True">
+                    <Grid Margin="6,3,6,2">
+                        <Rectangle Height="1"
+                                   VerticalAlignment="Bottom"
+                                   Margin="0,0,0,1"
+                                   Fill="#FF3D3D3D"
+                                   HorizontalAlignment="Stretch"/>
+                        <UniformGrid Rows="1" Columns="16" VerticalAlignment="Bottom" Height="9" Margin="0,0,0,2">
+                            <Rectangle Width="1" HorizontalAlignment="Center" Fill="#FF404040" Margin="0,2,0,0"/>
+                            <Rectangle Width="1" HorizontalAlignment="Center" Fill="#FF404040" Margin="0,2,0,0"/>
+                            <Rectangle Width="1" HorizontalAlignment="Center" Fill="#FF404040" Margin="0,2,0,0"/>
+                            <Rectangle Width="1" HorizontalAlignment="Center" Fill="#FF404040" Margin="0,2,0,0"/>
+                            <Rectangle Width="1" HorizontalAlignment="Center" Fill="#FF404040" Margin="0,2,0,0"/>
+                            <Rectangle Width="1" HorizontalAlignment="Center" Fill="#FF404040" Margin="0,2,0,0"/>
+                            <Rectangle Width="1" HorizontalAlignment="Center" Fill="#FF404040" Margin="0,2,0,0"/>
+                            <Rectangle Width="1" HorizontalAlignment="Center" Fill="#FF404040" Margin="0,2,0,0"/>
+                            <Rectangle Width="1" HorizontalAlignment="Center" Fill="#FF404040" Margin="0,2,0,0"/>
+                            <Rectangle Width="1" HorizontalAlignment="Center" Fill="#FF404040" Margin="0,2,0,0"/>
+                            <Rectangle Width="1" HorizontalAlignment="Center" Fill="#FF404040" Margin="0,2,0,0"/>
+                            <Rectangle Width="1" HorizontalAlignment="Center" Fill="#FF404040" Margin="0,2,0,0"/>
+                            <Rectangle Width="1" HorizontalAlignment="Center" Fill="#FF404040" Margin="0,2,0,0"/>
+                            <Rectangle Width="1" HorizontalAlignment="Center" Fill="#FF404040" Margin="0,2,0,0"/>
+                            <Rectangle Width="1" HorizontalAlignment="Center" Fill="#FF404040" Margin="0,2,0,0"/>
+                            <Rectangle Width="1" HorizontalAlignment="Center" Fill="#FF404040" Margin="0,2,0,0"/>
+                        </UniformGrid>
+                    </Grid>
+                </Border>
+
+                <!-- Graph: framed plot area -->
+                <Border Grid.Row="2"
+                        Background="#FF0E0E0E"
+                        BorderBrush="#FF383838"
+                        BorderThickness="1"
                         CornerRadius="6"
+                        Padding="2"
                         ClipToBounds="True"
                         VerticalAlignment="Stretch"
                         MinHeight="160"
-                        HorizontalAlignment="Stretch">
+                        HorizontalAlignment="Stretch"
+                        SnapsToDevicePixels="True">
+                    <Border Background="#FF111111"
+                            CornerRadius="4"
+                            ClipToBounds="True">
                     <Image x:Name="GraphImage"
                            Stretch="Fill"
                            RenderOptions.BitmapScalingMode="NearestNeighbor"/>
+                    </Border>
                 </Border>
 
-                <!-- Legend: tight under graph -->
-                <StackPanel Grid.Row="2"
-                            Orientation="Horizontal"
-                            VerticalAlignment="Top"
-                            Margin="0,2,0,0">
-                    <Ellipse Width="8" Height="8" Fill="#FF1DB954" Margin="0,0,4,0" VerticalAlignment="Center"/>
-                    <TextBlock Text="Voiced (high confidence)"
-                               FontFamily="Segoe UI" FontSize="10" Foreground="#FF555555" Margin="0,0,16,0" VerticalAlignment="Center"/>
-                    <Ellipse Width="8" Height="8" Fill="#FF555555" Margin="0,0,4,0" VerticalAlignment="Center"/>
-                    <TextBlock Text="Voiced (low confidence)"
-                               FontFamily="Segoe UI" FontSize="10" Foreground="#FF555555" Margin="0,0,16,0" VerticalAlignment="Center"/>
-                    <Rectangle Width="20" Height="2" Fill="#FF1E1E1E" Margin="0,0,4,0" VerticalAlignment="Center"/>
-                    <TextBlock Text="Semitone grid"
-                               FontFamily="Segoe UI" FontSize="10" Foreground="#FF555555" VerticalAlignment="Center"/>
+                <!-- Legend: compact overlay-style strip -->
+                <Border Grid.Row="3"
+                        Background="#FF141414"
+                        BorderBrush="#FF252525"
+                        BorderThickness="0,1,0,0"
+                        Padding="4,4,4,2"
+                        Margin="0,0,0,0"
+                        SnapsToDevicePixels="True">
+                <StackPanel Orientation="Horizontal"
+                            VerticalAlignment="Center">
+                    <Ellipse Width="7" Height="7" Fill="#FF1DB954" Margin="0,0,3,0" VerticalAlignment="Center"/>
+                    <TextBlock Text="High conf."
+                               FontFamily="Segoe UI" FontSize="9" Foreground="#FF666666" Margin="0,0,10,0" VerticalAlignment="Center"/>
+                    <Ellipse Width="7" Height="7" Fill="#FF555555" Margin="0,0,3,0" VerticalAlignment="Center"/>
+                    <TextBlock Text="Low conf."
+                               FontFamily="Segoe UI" FontSize="9" Foreground="#FF666666" Margin="0,0,10,0" VerticalAlignment="Center"/>
+                    <Rectangle Width="16" Height="2" Fill="#FF2A2A2A" Margin="0,0,3,0" VerticalAlignment="Center"/>
+                    <TextBlock Text="Grid"
+                               FontFamily="Segoe UI" FontSize="9" Foreground="#FF666666" VerticalAlignment="Center"/>
                 </StackPanel>
+                </Border>
         </Grid>
     </DockPanel>
 </UserControl>
