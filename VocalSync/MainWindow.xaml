@@ -220,21 +220,24 @@
 
         <Grid Grid.Column="1" Margin="0,0,12,0">
             <Grid.RowDefinitions>
-                <RowDefinition Height="1.55*" MinHeight="188"/>
+                <RowDefinition Height="Auto"/>
                 <RowDefinition Height="5"/>
                 <RowDefinition Height="3.45*" MinHeight="280"/>
                 <RowDefinition Height="Auto"/>
                 <RowDefinition Height="36"/>
             </Grid.RowDefinitions>
 
-            <!-- LIVE: compact monitoring + input strip -->
-            <Grid Grid.Row="0" MinHeight="0">
+            <!-- LIVE: natural height, capped; top-aligned so workspace row gets clean remainder -->
+            <Border Grid.Row="0"
+                    MaxHeight="260"
+                    VerticalAlignment="Top">
+            <Grid MinHeight="0">
                 <Grid.RowDefinitions>
                     <RowDefinition Height="Auto"/>
                     <RowDefinition Height="Auto"/>
                     <RowDefinition Height="Auto"/>
                     <RowDefinition Height="Auto"/>
-                    <RowDefinition Height="68"/>
+                    <RowDefinition Height="48"/>
                     <RowDefinition Height="Auto"/>
                     <RowDefinition Height="Auto"/>
                     <RowDefinition Height="Auto"/>
@@ -555,6 +558,7 @@
                        ToolTip="{Binding PlaybackTargetPath}"/>
         </Grid>
             </Grid>
+            </Border>
 
             <!-- Adjustable split: live (above) vs analysis workspace (below) -->
             <GridSplitter Grid.Row="1"
