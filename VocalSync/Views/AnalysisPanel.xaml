@@ -189,13 +189,10 @@
         </Border>
 
         <!-- HEADER + timeline + GRAPH + LEGEND -->
-        <!-- DEBUG: Background="#2200FF00" = semi-transparent green on the outer grid -->
-        <Grid x:Name="OuterLayoutGrid" UseLayoutRounding="True"
-              Background="#2200FF00">
+        <Grid x:Name="OuterLayoutGrid" UseLayoutRounding="True">
             <Grid.RowDefinitions>
                 <RowDefinition Height="Auto"/>
                 <RowDefinition Height="Auto"/>
-                <!-- DEBUG Phase 1: was Height="*" MinHeight="160" — forced fixed to prove star sizing -->
                 <RowDefinition Height="300"/>
                 <RowDefinition Height="Auto"/>
             </Grid.RowDefinitions>
@@ -259,10 +256,8 @@
                 </Border>
 
                 <!-- Graph: framed plot area -->
-                <!-- DEBUG Phase 2: Height="300" MinHeight="300" forced; Background="#22FF0000" red debug -->
                 <Border x:Name="GraphBorder"
                         Grid.Row="2"
-                        Background="#22FF0000"
                         BorderBrush="#FF383838"
                         BorderThickness="1"
                         CornerRadius="6"
@@ -277,14 +272,9 @@
                             CornerRadius="4"
                             ClipToBounds="True">
                         <!-- Graph stack: bitmap image + note-label overlay + playhead overlay Canvas -->
-                        <!-- DEBUG Phase 4: blue background on GraphContentGrid -->
-                        <Grid x:Name="GraphContentGrid"
-                              Background="#220000FF">
-                            <!-- DEBUG Phase 3: Width/Height forced; Phase 4: cyan Background on Image -->
+                        <Grid x:Name="GraphContentGrid">
                             <Image x:Name="GraphImage"
                                    Stretch="Fill"
-                                   Width="600"
-                                   Height="300"
                                    HorizontalAlignment="Stretch"
                                    VerticalAlignment="Stretch"
                                    RenderOptions.BitmapScalingMode="NearestNeighbor"/>

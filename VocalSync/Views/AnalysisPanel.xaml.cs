@@ -192,25 +192,16 @@ public partial class AnalysisPanel : UserControl
             _player.Dispose();
         };
 
-        // Graph must have real width/height before bitmap work — w≤1 makes every sample share x=0;
-        // Stretch=Fill then scales one column to full width → solid green “fill” artifact.
+        // Bitmap width/height come from GraphContentGrid (stable); w≤1 would collapse x resolution.
+        // GraphImage collapses to 0×0 when Source is null (WPF Image); resize redraw uses GraphContentGrid.
         GraphImage.SizeChanged += (_, args) =>
         {
-            double nw = GraphImage.ActualWidth;
-            double nh = GraphImage.ActualHeight;
-            if (_points.Length > 0 && nw >= 2 && nh >= 2)
-            {
-                L(NextSeq(),
-                    $"GraphImage.SizeChanged TRIGGER _points={_points.Length} " +
-                    $"size={nw:F0}x{nh:F0} prev={args.PreviousSize.Width:F0}x{args.PreviousSize.Height:F0} " +
-                    $"token={_graphRedrawToken} {TC}");
-                RenderGraph(_points);
-            }
-            else
-            {
-                L(NextSeq(),
-                    $"GraphImage.SizeChanged SKIPPED _points={_points.Length} size={nw:F0}x{nh:F0} {TC}");
-            }
+            double cw = GraphContentGrid.ActualWidth;
+            double ch = GraphContentGrid.ActualHeight;
+            L(NextSeq(),
+                $"GraphImage.SizeChanged img={GraphImage.ActualWidth:F0}x{GraphImage.ActualHeight:F0} " +
+                $"grid={cw:F0}x{ch:F0} prevImg={args.PreviousSize.Width:F0}x{args.PreviousSize.Height:F0} " +
+                $"_points={_points.Length} {TC}");
         };
 
         // Refresh note-label overlay on resize (canvas height changes with splitter)
@@ -241,26 +232,9 @@ public partial class AnalysisPanel : UserControl
         {
             L(NextSeq(), $"[Layout] GraphImage.Loaded {TC}");
             DumpLayout("GraphImage", GraphImage);
+            DumpLayout("GraphContentGrid", GraphContentGrid);
             DumpImageState();
             WalkParentChain(GraphImage);
-
-            // ── DEBUG Phase 5: magenta test bitmap — bypasses entire render pipeline ──
-            // PURPOSE: if this is visible, GraphImage IS displayed and the problem
-            //          is purely in the render pipeline timing / assignment.
-            //          If this is NOT visible, the Image control itself is not rendering.
-            const int TestW = 600, TestH = 300;
-            var testBmp = new WriteableBitmap(TestW, TestH, 96, 96, PixelFormats.Bgra32, null);
-            var testPx  = new int[TestW * TestH];
-            // Magenta: R=FF G=00 B=FF A=FF → 0xFFFF00FF
-            Array.Fill(testPx, unchecked((int)0xFFFF00FF));
-            testBmp.Lock();
-            testBmp.WritePixels(new Int32Rect(0, 0, TestW, TestH), testPx, TestW * 4, 0);
-            testBmp.Unlock();
-            GraphImage.Source = testBmp;
-            long p5seq = NextSeq();
-            L(p5seq, $"[GraphSource] POST-PHASE5 Source={DescribeSource(GraphImage.Source)} origin=Loaded {TC}");
-            _lastKnownSource    = testBmp;
-            _lastKnownSourceSeq = p5seq;
         };
 
         GraphImage.LayoutUpdated += (_, _) =>
@@ -285,13 +259,17 @@ public partial class AnalysisPanel : UserControl
             DumpLayout("GraphImage@BorderSC", GraphImage);
         };
 
-        // 4. Inner content grid (holds Image+Canvases) — SizeChanged
+        // 4. Inner content grid (holds Image+Canvases) — SizeChanged (stable size when Image.Source is null)
         GraphContentGrid.SizeChanged += (_, args) =>
         {
             L(NextSeq(),
                 $"[Layout] GraphContentGrid.SizeChanged " +
                 $"new={GraphContentGrid.ActualWidth:F1}x{GraphContentGrid.ActualHeight:F1} " +
                 $"prev={args.PreviousSize.Width:F1}x{args.PreviousSize.Height:F1} {TC}");
+            double cw = GraphContentGrid.ActualWidth;
+            double ch = GraphContentGrid.ActualHeight;
+            if (_points.Length > 0 && cw >= 2 && ch >= 2)
+                RenderGraph(_points);
         };
 
         // 5. Outer layout grid (header/timeline/graph/legend rows) — SizeChanged
@@ -412,7 +390,7 @@ public partial class AnalysisPanel : UserControl
     }
 
     /// <summary>
-    /// Waits until <see cref="GraphImage"/> has a valid measure, then draws <see cref="_points"/>.
+    /// Waits until <see cref="GraphContentGrid"/> has a valid size, then draws <see cref="_points"/>.
     /// Retries on <see cref="DispatcherPriority.ContextIdle"/> (bounded) so we still redraw when
     /// <see cref="UIElement.SizeChanged"/> does not fire (same dimensions as previous selection).
     /// </summary>
@@ -453,14 +431,14 @@ public partial class AnalysisPanel : UserControl
                 return;
             }
 
-            // ── Exit C: GraphImage not yet laid out ────────────────────────
-            double gw = GraphImage.ActualWidth;
-            double gh = GraphImage.ActualHeight;
+            // ── Exit C: graph content area not yet laid out (Image is 0×0 when Source is null) ──
+            double gw = GraphContentGrid.ActualWidth;
+            double gh = GraphContentGrid.ActualHeight;
             if (gw < 2 || gh < 2)
             {
                 L(NextSeq(),
                     $"Step() EXIT-C SIZE-WAIT cb#{cbId} " +
-                    $"size={gw:F1}×{gh:F1} retries={remainingRetries} token={token} {TC}");
+                    $"GraphContentGrid={gw:F1}×{gh:F1} retries={remainingRetries} token={token} {TC}");
                 if (remainingRetries > 0)
                 {
                     long retryCbId = NextCb();
@@ -479,7 +457,7 @@ public partial class AnalysisPanel : UserControl
             // ── Exit E: success — fire render ─────────────────────────────
             L(NextSeq(),
                 $"Step() EXIT-E FIRING cb#{cbId} _points={_points.Length} " +
-                $"token={token} size={gw:F0}×{gh:F0} " +
+                $"token={token} GraphContentGrid={gw:F0}×{gh:F0} " +
                 $"GraphImage.Source={(GraphImage.Source == null ? "null" : "bmp")} {TC}");
             RenderGraph(_points);
         }
@@ -526,15 +504,15 @@ public partial class AnalysisPanel : UserControl
     private void RenderGraph(PitchPoint[] points)
     {
         long entrySeq = NextSeq();
-        int  w = (int)GraphImage.ActualWidth;
-        int  h = (int)GraphImage.ActualHeight;
+        int  w = (int)GraphContentGrid.ActualWidth;
+        int  h = (int)GraphContentGrid.ActualHeight;
 
         bool srcWasNull = GraphImage.Source == null;
         int  voicedCount = points.Count(p => p.IsVoiced);
 
         L(entrySeq,
             $"RenderGraph() ENTRY points={points.Length} voiced={voicedCount} " +
-            $"bitmap={w}×{h} token={_graphRedrawToken} " +
+            $"bitmap={w}×{h} (from GraphContentGrid) token={_graphRedrawToken} " +
             $"GraphImage.Source={(srcWasNull ? "null" : "bmp")} {TC}");
 
         // Full layout state at render time
@@ -681,7 +659,8 @@ public partial class AnalysisPanel : UserControl
         L(commitSeq,
             $"[GraphSource] PRE-COMMIT " +
             $"prev={DescribeSource(GraphImage.Source)} -> new=WriteableBitmap({w}x{h}) " +
-            $"Actual={GraphImage.ActualWidth:F1}x{GraphImage.ActualHeight:F1} " +
+            $"GraphContentGrid={GraphContentGrid.ActualWidth:F1}x{GraphContentGrid.ActualHeight:F1} " +
+            $"GraphImage={GraphImage.ActualWidth:F1}x{GraphImage.ActualHeight:F1} " +
             $"IsLoaded={IsLoaded} Vis={Visibility} " +
             $"UIThread={IsUiThread} {TC}");
 
