@@ -131,6 +131,22 @@ public partial class AnalysisPanel : UserControl
         return src.GetType().Name;
     }
 
+    /// <summary>
+    /// One contiguous sung note for Melodyne-style blob visualization (grouped frames; no editing).
+    /// Populated from existing <see cref="PitchPoint"/> timelines during render — not part of analysis DSP.
+    /// </summary>
+#pragma warning disable CS0649 // Fields assigned when note grouping is implemented (Phase 2+)
+    private sealed class NoteRegion
+    {
+        public float StartTime;
+        public float EndTime;
+        public int Midi;
+        public int MinMidi;
+        public int MaxMidi;
+        public float AverageConfidence;
+    }
+#pragma warning restore CS0649
+
     // ── Render palette ────────────────────────────────────────────────────
     private static readonly int ColBackground   = Bgra(0x11, 0x11, 0x11);
     private static readonly int ColBandShade    = Bgra(0x14, 0x14, 0x16); // alternating octave band
