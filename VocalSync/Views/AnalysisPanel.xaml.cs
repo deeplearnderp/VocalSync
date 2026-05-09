@@ -233,6 +233,16 @@ public partial class AnalysisPanel : UserControl
         return regions;
     }
 
+    /// <summary>
+    /// Axis-aligned hit target for a rendered note blob (bounds in bitmap pixel space; see <see cref="_blobHitBitmapW"/>).
+    /// </summary>
+    private sealed class BlobHitRegion
+    {
+        public Rect Bounds;
+        public NoteRegion Region = null!;
+        public bool Corrected;
+    }
+
     // ── Render palette ────────────────────────────────────────────────────
     private static readonly int ColBackground   = Bgra(0x11, 0x11, 0x11);
     private static readonly int ColBandShade    = Bgra(0x14, 0x14, 0x16); // alternating octave band
@@ -251,6 +261,11 @@ public partial class AnalysisPanel : UserControl
     private string? _correctedPath;
     /// <summary>Per-frame pitch after correction blend (same length as <see cref="_points"/>); null if no render yet.</summary>
     private PitchPoint[]? _correctedContourPoints;
+
+    /// <summary>Note-blob hit targets from the last graph render (bitmap pixel space; original entries then corrected).</summary>
+    private readonly List<BlobHitRegion> _blobHitRegions = new();
+    private int _blobHitBitmapW;
+    private int _blobHitBitmapH;
     private bool _isRendering;
 
     /// <summary>Future-ready: hide original contour layer without removing data.</summary>
@@ -461,6 +476,9 @@ public partial class AnalysisPanel : UserControl
         L(clearSrcSeq,
             $"[GraphSource] prev={DescribeSource(GraphImage.Source)} -> null REASON:Clear {TC}");
         GraphImage.Source = null;
+        _blobHitRegions.Clear();
+        _blobHitBitmapW = 0;
+        _blobHitBitmapH = 0;
         GraphBlobOriginalImage.Source = null;
         GraphBlobCorrectedImage.Source = null;
         GraphBlobCorrectedImage.Visibility = Visibility.Collapsed;
@@ -659,6 +677,9 @@ public partial class AnalysisPanel : UserControl
 
         if (w < 2 || h < 2)
         {
+            _blobHitRegions.Clear();
+            _blobHitBitmapW = 0;
+            _blobHitBitmapH = 0;
             GraphBlobOriginalImage.Source = null;
             GraphBlobCorrectedImage.Source = null;
             GraphBlobCorrectedImage.Visibility = Visibility.Collapsed;
@@ -804,9 +825,14 @@ public partial class AnalysisPanel : UserControl
         WriteableBitmap bgBmp = CommitPixelsToWriteableBitmap(w, h, pixels);
 
         // ── 5b. Note blobs (same Z-order as XAML: behind contour bitmaps) ─
+        _blobHitRegions.Clear();
+        _blobHitBitmapW = w;
+        _blobHitBitmapH = h;
+
         if (points.Length > 0)
         {
             List<NoteRegion> origRegions = BuildNoteRegions(points, midiMin, midiMax);
+            AppendBlobHitRegions(origRegions, w, h, midiMin, midiMax, corrected: false);
             GraphBlobOriginalImage.Source = RenderBlobBitmap(origRegions, w, h, midiMin, midiMax, corrected: false);
         }
         else
@@ -817,6 +843,7 @@ public partial class AnalysisPanel : UserControl
         if (showCorrectedLayer)
         {
             List<NoteRegion> corrRegions = BuildNoteRegions(_correctedContourPoints!, midiMin, midiMax);
+            AppendBlobHitRegions(corrRegions, w, h, midiMin, midiMax, corrected: true);
             GraphBlobCorrectedImage.Source = RenderBlobBitmap(corrRegions, w, h, midiMin, midiMax, corrected: true);
             GraphBlobCorrectedImage.Visibility = Visibility.Visible;
         }
@@ -912,31 +939,11 @@ public partial class AnalysisPanel : UserControl
         bool corrected)
     {
         var pixels = new int[w * h];
-        float tt = Math.Max(_renderTotalSeconds, 1e-4f);
 
         foreach (NoteRegion region in regions)
         {
-            int ya = MidiToY(region.Midi, h, midiMin, midiMax);
-            int yb = region.Midi < midiMax
-                ? MidiToY(region.Midi + 1, h, midiMin, midiMax)
-                : MidiToY(region.Midi - 1, h, midiMin, midiMax);
-            int yTop = Math.Clamp(Math.Min(ya, yb), 0, h - 1);
-            int yBot = Math.Clamp(Math.Max(ya, yb), 0, h - 1);
-            if (yBot - yTop < 1)
-            {
-                int mid = Math.Clamp((yTop + yBot) / 2, 0, h - 1);
-                yTop = Math.Clamp(mid - 1, 0, h - 1);
-                yBot = Math.Clamp(mid + 1, 0, h - 1);
-            }
-
-            int px0 = (int)(region.StartTime / tt * (w - 1));
-            int px1 = (int)(region.EndTime / tt * (w - 1));
-            px0 = Math.Clamp(px0, 0, w - 1);
-            px1 = Math.Clamp(px1, 0, w - 1);
-            if (px1 < px0)
-                (px0, px1) = (px1, px0);
-            if (px1 == px0)
-                px1 = Math.Min(w - 1, px0 + 1);
+            GetBlobLayoutPixels(region, w, h, midiMin, midiMax, _renderTotalSeconds,
+                out int px0, out int px1, out int yTop, out int yBot, out int radius);
 
             int alpha = Math.Clamp((int)(52 + region.AverageConfidence * 130), 36, 180);
             int sr, sg, sb;
@@ -954,13 +961,79 @@ public partial class AnalysisPanel : UserControl
             }
 
             int fill = (alpha << 24) | (sr << 16) | (sg << 8) | sb;
-            int bandH = yBot - yTop + 1;
-            int bandW = px1 - px0 + 1;
-            int radius = Math.Clamp(Math.Min(bandW, bandH) / 3, 2, 14);
             FillRoundedRectBlobBlend(pixels, w, h, px0, yTop, px1, yBot, radius, fill);
         }
 
         return CommitPixelsToWriteableBitmap(w, h, pixels);
+    }
+
+    /// <summary>
+    /// Pixel layout for one blob; must stay aligned with <see cref="RenderBlobBitmap"/> hit cache and fill.
+    /// </summary>
+    private static void GetBlobLayoutPixels(
+        NoteRegion region,
+        int w,
+        int h,
+        int midiMin,
+        int midiMax,
+        float totalSeconds,
+        out int px0,
+        out int px1,
+        out int yTop,
+        out int yBot,
+        out int radius)
+    {
+        float tt = Math.Max(totalSeconds, 1e-4f);
+
+        int ya = MidiToY(region.Midi, h, midiMin, midiMax);
+        int yb = region.Midi < midiMax
+            ? MidiToY(region.Midi + 1, h, midiMin, midiMax)
+            : MidiToY(region.Midi - 1, h, midiMin, midiMax);
+        yTop = Math.Clamp(Math.Min(ya, yb), 0, h - 1);
+        yBot = Math.Clamp(Math.Max(ya, yb), 0, h - 1);
+        if (yBot - yTop < 1)
+        {
+            int mid = Math.Clamp((yTop + yBot) / 2, 0, h - 1);
+            yTop = Math.Clamp(mid - 1, 0, h - 1);
+            yBot = Math.Clamp(mid + 1, 0, h - 1);
+        }
+
+        px0 = (int)(region.StartTime / tt * (w - 1));
+        px1 = (int)(region.EndTime / tt * (w - 1));
+        px0 = Math.Clamp(px0, 0, w - 1);
+        px1 = Math.Clamp(px1, 0, w - 1);
+        if (px1 < px0)
+            (px0, px1) = (px1, px0);
+        if (px1 == px0)
+            px1 = Math.Min(w - 1, px0 + 1);
+
+        int bandH = yBot - yTop + 1;
+        int bandW = px1 - px0 + 1;
+        radius = Math.Clamp(Math.Min(bandW, bandH) / 3, 2, 14);
+    }
+
+    private void AppendBlobHitRegions(
+        List<NoteRegion> regions,
+        int w,
+        int h,
+        int midiMin,
+        int midiMax,
+        bool corrected)
+    {
+        foreach (NoteRegion region in regions)
+        {
+            GetBlobLayoutPixels(region, w, h, midiMin, midiMax, _renderTotalSeconds,
+                out int px0, out int px1, out int yTop, out int yBot, out _);
+
+            double rw = px1 - px0 + 1;
+            double rh = yBot - yTop + 1;
+            _blobHitRegions.Add(new BlobHitRegion
+            {
+                Bounds = new Rect(px0, yTop, rw, rh),
+                Region = region,
+                Corrected = corrected,
+            });
+        }
     }
 
     private static int BlobDistSq(int ax, int ay, int bx, int by)
