@@ -3,6 +3,7 @@ using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
+using System.Windows.Threading;
 using VocalSync.Models;
 using VocalSync.Services;
 
@@ -31,6 +32,9 @@ public partial class AnalysisPanel : UserControl
     private string? _correctedPath;
     private bool _isRendering;
 
+    /// <summary>Invalidates in-flight graph retry chains when analysis clears or a new session loads.</summary>
+    private int _graphRedrawToken;
+
     /// <summary>Matches main / settings output device for corrected playback.</summary>
     public void SetPlaybackDevice(int deviceNumber) => _player.SetDevice(deviceNumber);
 
@@ -48,10 +52,14 @@ public partial class AnalysisPanel : UserControl
 
         Unloaded += (_, _) => _player.Dispose();
 
-        SizeChanged += (_, _) =>
+        // Graph must have real width/height before bitmap work — w≤1 makes every sample share x=0;
+        // Stretch=Fill then scales one column to full width → solid green “fill” artifact.
+        GraphImage.SizeChanged += (_, _) =>
         {
-            if (_points.Length > 0 && ActualWidth > 0)
-                RenderGraph(_points);
+            if (_points.Length > 0
+                && GraphImage.ActualWidth >= 2
+                && GraphImage.ActualHeight >= 2)
+                RenderGraph(_points); // size actually changed — safe immediate redraw
         };
 
         UpdateCorrectionControls();
@@ -60,6 +68,7 @@ public partial class AnalysisPanel : UserControl
     /// <summary>Clears analysis UI (no file loaded).</summary>
     public void Clear()
     {
+        _graphRedrawToken++;
         ResetCorrectionSession();
         _points = [];
         _sourcePath = string.Empty;
@@ -75,12 +84,43 @@ public partial class AnalysisPanel : UserControl
     {
         ResetCorrectionSession();
 
+        _graphRedrawToken++;
         _points = points;
         _sourcePath = filePath;
 
         PopulateHeader(points, filePath);
-        Dispatcher.BeginInvoke(() => RenderGraph(points), System.Windows.Threading.DispatcherPriority.Loaded);
+        ScheduleGraphRedraw();
         UpdateCorrectionControls();
+    }
+
+    /// <summary>
+    /// Waits until <see cref="GraphImage"/> has a valid measure, then draws <see cref="_points"/>.
+    /// Retries on <see cref="DispatcherPriority.ContextIdle"/> (bounded) so we still redraw when
+    /// <see cref="UIElement.SizeChanged"/> does not fire (same dimensions as previous selection).
+    /// </summary>
+    private void ScheduleGraphRedraw()
+    {
+        if (_points.Length == 0) return;
+
+        int token = _graphRedrawToken;
+
+        void Step(int remainingRetries)
+        {
+            if (token != _graphRedrawToken) return;
+            if (_points.Length == 0) return;
+
+            if (GraphImage.ActualWidth < 2 || GraphImage.ActualHeight < 2)
+            {
+                if (remainingRetries > 0)
+                    Dispatcher.BeginInvoke(() => Step(remainingRetries - 1), DispatcherPriority.ContextIdle);
+                return;
+            }
+
+            RenderGraph(_points);
+        }
+
+        // Loaded: first chance after tree hookup; bounded ContextIdle chain catches post-measure layout.
+        Dispatcher.BeginInvoke(() => Step(4), DispatcherPriority.Loaded);
     }
 
     private void ResetCorrectionSession()
@@ -119,21 +159,23 @@ public partial class AnalysisPanel : UserControl
 
     private void RenderGraph(PitchPoint[] points)
     {
-        int w = Math.Max(1, (int)GraphImage.ActualWidth);
-        int h = Math.Max(1, (int)GraphImage.ActualHeight);
+        int w = (int)GraphImage.ActualWidth;
+        int h = (int)GraphImage.ActualHeight;
+        if (w < 2 || h < 2)
+            return;
 
         var bmp = new WriteableBitmap(w, h, 96, 96, PixelFormats.Bgra32, null);
         var pixels = new int[w * h];
 
         Array.Fill(pixels, ColBackground);
 
+        // Semitone grid: thin horizontal lines only (no full-row pixel stomp loops).
         for (int midi = MidiYMin; midi <= MidiYMax; midi++)
         {
             int y = MidiToY(midi, h);
             if (y < 0 || y >= h) continue;
             int col = (midi % 12 == 0) ? ColGridOctave : ColGrid;
-            for (int x = 0; x < w; x++)
-                pixels[y * w + x] = col;
+            DrawLineBresenham(pixels, w, h, 0, y, w - 1, y, col);
         }
 
         if (points.Length > 0)
