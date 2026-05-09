@@ -7,6 +7,7 @@ using System.Windows.Media.Imaging;
 using System.Windows.Threading;
 using VocalSync.Models;
 using VocalSync.Services;
+using VocalSync.ViewModels;
 
 namespace VocalSync.Views;
 
@@ -162,8 +163,23 @@ public partial class AnalysisPanel : UserControl
     /// <summary>~30 fps ticker that drives the playback cursor overlay.</summary>
     private readonly DispatcherTimer _playheadTimer;
 
+    /// <summary>Main window VM — used only for library WAV playhead sync (no binding).</summary>
+    private MainViewModel? _workspacePlaybackVm;
+
     /// <summary>Matches main / settings output device for corrected playback.</summary>
     public void SetPlaybackDevice(int deviceNumber) => _player.SetDevice(deviceNumber);
+
+    /// <summary>Wires library playback state from <see cref="MainViewModel"/> for graph playhead sync.</summary>
+    public void AttachWorkspacePlayback(MainViewModel? vm) => _workspacePlaybackVm = vm;
+
+    /// <summary>Called when <see cref="MainViewModel.IsPlayingBack"/> changes (main window PropertyChanged).</summary>
+    public void OnMainWorkspacePlaybackStateChanged(bool isPlayingBack)
+    {
+        if (isPlayingBack)
+            EnsurePlayheadTimerRunning();
+        else
+            StopPlayheadTimerIfIdle();
+    }
 
     public AnalysisPanel()
     {
@@ -175,10 +191,10 @@ public partial class AnalysisPanel : UserControl
         _player.PlaybackStopped += () => Dispatcher.BeginInvoke(() =>
         {
             PlayCorrectedButton.Content = "▶ Play Corrected";
-            StopPlayhead();
+            StopPlayheadTimerIfIdle();
         });
 
-        // Playhead timer: ~30 fps, only runs during active corrected-WAV playback.
+        // Playhead timer: ~30 fps during corrected WAV or library WAV playback.
         _playheadTimer = new DispatcherTimer(DispatcherPriority.Render)
         {
             Interval = TimeSpan.FromMilliseconds(33)
@@ -340,6 +356,8 @@ public partial class AnalysisPanel : UserControl
         NoteLabelsCanvas.Children.Clear();
         TimelineCanvas.Children.Clear();
 
+        ForceStopPlayhead();
+
         L(NextSeq(), $"Clear() EXIT token={_graphRedrawToken} _points=0 {TC}");
     }
 
@@ -470,7 +488,7 @@ public partial class AnalysisPanel : UserControl
     {
         _isRendering = false;
         _correctedPath = null;
-        StopPlayhead();
+        StopPlayheadTimerIfIdle();
         _player.Stop();
         PlayCorrectedButton.Content = "▶ Play Corrected";
         PlayCorrectedButton.IsEnabled = false;
@@ -935,6 +953,7 @@ public partial class AnalysisPanel : UserControl
         {
             _player.Stop();
             PlayCorrectedButton.Content = "▶ Play Corrected";
+            StopPlayheadTimerIfIdle();
 
             if (!_isRendering)
                 CorrectionStatus.Text = "Enable correction above to render";
@@ -954,6 +973,7 @@ public partial class AnalysisPanel : UserControl
         if (_isRendering || CorrectionToggle.IsChecked != true || _points.Length == 0) return;
 
         _player.Stop();
+        StopPlayheadTimerIfIdle();
         PlayCorrectedButton.IsEnabled = false;
         PlayCorrectedButton.Content = "▶ Play Corrected";
 
@@ -1007,7 +1027,7 @@ public partial class AnalysisPanel : UserControl
         {
             _player.Stop();
             PlayCorrectedButton.Content = "▶ Play Corrected";
-            StopPlayhead();
+            StopPlayheadTimerIfIdle();
             return;
         }
 
@@ -1015,7 +1035,7 @@ public partial class AnalysisPanel : UserControl
         {
             _player.Play(_correctedPath);
             PlayCorrectedButton.Content = "■ Stop";
-            StartPlayhead();
+            EnsurePlayheadTimerRunning();
         }
         catch (Exception ex)
         {
@@ -1027,50 +1047,102 @@ public partial class AnalysisPanel : UserControl
         }
     }
 
-    // ── Playhead (DAW-style cursor overlay) ───────────────────────────────
+    // ── Playhead (DAW-style overlay — independent of graph bitmap redraw) ──
 
-    private void StartPlayhead()
+    private void EnsurePlayheadTimerRunning()
     {
         PlayheadCanvas.Visibility = Visibility.Visible;
-        UpdatePlayhead(); // position immediately on first frame
-        _playheadTimer.Start();
+        if (!_playheadTimer.IsEnabled)
+            _playheadTimer.Start();
+        UpdatePlayhead();
     }
 
-    private void StopPlayhead()
+    /// <summary>Stops the playhead timer when neither corrected nor library playback is active.</summary>
+    private void StopPlayheadTimerIfIdle()
+    {
+        if (_player.IsPlaying) return;
+        if (IsMainWorkspacePlaybackActive()) return;
+
+        _playheadTimer.Stop();
+        PlayheadCanvas.Visibility = Visibility.Collapsed;
+        ResetPlayheadVisualToStart();
+    }
+
+    /// <summary>Workspace cleared — always hide playhead (no graph session).</summary>
+    private void ForceStopPlayhead()
     {
         _playheadTimer.Stop();
         PlayheadCanvas.Visibility = Visibility.Collapsed;
+        ResetPlayheadVisualToStart();
+    }
+
+    private bool IsMainWorkspacePlaybackActive()
+    {
+        return _workspacePlaybackVm != null
+            && _workspacePlaybackVm.IsPlayingBack
+            && _workspacePlaybackVm.MainPlaybackDuration.TotalSeconds > 0;
+    }
+
+    private void ResetPlayheadVisualToStart()
+    {
+        double h = GraphContentGrid.ActualHeight >= 2 ? GraphContentGrid.ActualHeight : 1;
+        Canvas.SetLeft(PlayheadPlayedShade, 0);
+        Canvas.SetTop(PlayheadPlayedShade, 0);
+        PlayheadPlayedShade.Width  = 0;
+        PlayheadPlayedShade.Height = h;
+
+        PlayheadLine.X1 = PlayheadLine.X2 = 0;
+        PlayheadLine.Y1 = 0;
+        PlayheadLine.Y2 = h;
+        PlayheadGlow.X1 = PlayheadGlow.X2 = 0;
+        PlayheadGlow.Y1 = 0;
+        PlayheadGlow.Y2 = h;
     }
 
     private void UpdatePlayhead()
     {
-        if (!_player.IsPlaying)
+        if (!_player.IsPlaying && !IsMainWorkspacePlaybackActive())
         {
-            StopPlayhead();
+            StopPlayheadTimerIfIdle();
             return;
         }
 
-        TimeSpan current = _player.CurrentTime;
-        TimeSpan total   = _player.TotalTime;
+        double graphW = GraphContentGrid.ActualWidth;
+        double graphH = GraphContentGrid.ActualHeight;
+        if (graphW < 2 || graphH < 2)
+            return;
+
+        TimeSpan current;
+        TimeSpan total;
+        if (_player.IsPlaying)
+        {
+            current = _player.CurrentTime;
+            total   = _player.TotalTime;
+        }
+        else
+        {
+            current = _workspacePlaybackVm!.MainPlaybackPosition;
+            total   = _workspacePlaybackVm.MainPlaybackDuration;
+        }
+
         if (total.TotalSeconds <= 0) return;
 
-        double graphWidth  = PlayheadCanvas.ActualWidth;
-        double graphHeight = PlayheadCanvas.ActualHeight;
-        if (graphWidth < 2 || graphHeight < 2) return;
-
         double norm = Math.Clamp(current.TotalSeconds / total.TotalSeconds, 0.0, 1.0);
-        double x    = norm * graphWidth;
+        // Same horizontal mapping as contour: tNorm * (w - 1)
+        double x = Math.Round(norm * (graphW - 1));
 
-        // Snap to device pixels for a crisp 1px line
-        x = Math.Round(x);
+        PlayheadPlayedShade.Width  = Math.Max(0, x);
+        PlayheadPlayedShade.Height = graphH;
+        Canvas.SetLeft(PlayheadPlayedShade, 0);
+        Canvas.SetTop(PlayheadPlayedShade, 0);
 
-        PlayheadLine.X1 = x;
-        PlayheadLine.X2 = x;
-        PlayheadLine.Y2 = graphHeight;
+        PlayheadLine.X1 = PlayheadLine.X2 = x;
+        PlayheadLine.Y1 = 0;
+        PlayheadLine.Y2 = graphH;
 
-        PlayheadGlow.X1 = x;
-        PlayheadGlow.X2 = x;
-        PlayheadGlow.Y2 = graphHeight;
+        PlayheadGlow.X1 = PlayheadGlow.X2 = x;
+        PlayheadGlow.Y1 = 0;
+        PlayheadGlow.Y2 = graphH;
     }
 
     /// <summary>1px Bresenham line on a BGRA32 buffer (pitch contour only — no fills).</summary>

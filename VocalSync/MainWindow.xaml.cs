@@ -27,6 +27,7 @@ public partial class MainWindow : Window
         _viewModel.WorkspaceSessionChanged += OnWorkspaceSessionChanged;
 
         WorkspacePanel.SetPlaybackDevice(_viewModel.SelectedOutputDeviceNumber);
+        WorkspacePanel.AttachWorkspacePlayback(_viewModel);
     }
 
     private void ToggleButton_Click(object sender, RoutedEventArgs e)
@@ -68,10 +69,15 @@ public partial class MainWindow : Window
             else
                 Visualizer.Update((float)_viewModel.InputLevel, waveform);
         }
+        else if (e.PropertyName == nameof(MainViewModel.IsPlayingBack))
+        {
+            WorkspacePanel.OnMainWorkspacePlaybackStateChanged(_viewModel.IsPlayingBack);
+        }
     }
 
     protected override void OnClosed(EventArgs e)
     {
+        WorkspacePanel.AttachWorkspacePlayback(null);
         _viewModel.WorkspaceSessionChanged -= OnWorkspaceSessionChanged;
         _viewModel.PropertyChanged -= OnViewModelPropertyChanged;
         _viewModel.Dispose();

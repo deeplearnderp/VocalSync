@@ -216,6 +216,12 @@ public class MainViewModel : INotifyPropertyChanged, IDisposable
         }
     }
 
+    /// <summary>NAudio position for library WAV playback; meaningful when <see cref="IsPlayingBack"/> is true.</summary>
+    public TimeSpan MainPlaybackPosition => _playback.CurrentTime;
+
+    /// <summary>NAudio duration for the WAV currently loaded in the main playback path.</summary>
+    public TimeSpan MainPlaybackDuration => _playback.TotalTime;
+
     private string _lastRecordingPath = string.Empty;
     /// <summary>Full path of the most recently completed recording. Empty if none.</summary>
     public string LastRecordingPath

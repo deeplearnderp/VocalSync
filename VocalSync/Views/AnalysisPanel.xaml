@@ -281,20 +281,23 @@
                             <!-- Octave note labels overlay (C3, C4…) — sits between graph and playhead -->
                             <Canvas x:Name="NoteLabelsCanvas"
                                     IsHitTestVisible="False"/>
-                            <!-- Playhead overlay: clipped to graph bounds automatically by parent ClipToBounds -->
+                            <!-- Playhead: above contour (bitmap); clipped by ancestor borders -->
                             <Canvas x:Name="PlayheadCanvas"
                                     IsHitTestVisible="False"
                                     Visibility="Collapsed">
-                                <!-- Soft glow: wider, dim, behind the sharp line -->
+                                <Rectangle x:Name="PlayheadPlayedShade"
+                                           Fill="#2200AA44"
+                                           IsHitTestVisible="False"
+                                           Width="0"
+                                           Height="1"/>
                                 <Line x:Name="PlayheadGlow"
-                                      Y1="0" Y2="2000"
-                                      Stroke="#40FFFFFF"
+                                      Y1="0" Y2="1"
+                                      Stroke="#55FFFFFF"
                                       StrokeThickness="3"
                                       IsHitTestVisible="False"/>
-                                <!-- Sharp cursor line -->
                                 <Line x:Name="PlayheadLine"
-                                      Y1="0" Y2="2000"
-                                      Stroke="#FFFFFFFF"
+                                      Y1="0" Y2="1"
+                                      Stroke="#FFE8E8E8"
                                       StrokeThickness="1"
                                       IsHitTestVisible="False"
                                       SnapsToDevicePixels="True"/>
