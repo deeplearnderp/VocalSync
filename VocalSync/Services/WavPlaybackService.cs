@@ -25,6 +25,18 @@ public sealed class WavPlaybackService : IDisposable
     public bool IsPlaying { get; private set; }
 
     /// <summary>
+    /// Current playback position. Returns <see cref="TimeSpan.Zero"/> when not playing.
+    /// Safe to read from the UI thread while playback is active.
+    /// </summary>
+    public TimeSpan CurrentTime => _reader?.CurrentTime ?? TimeSpan.Zero;
+
+    /// <summary>
+    /// Total duration of the currently loaded file. Returns <see cref="TimeSpan.Zero"/> when not playing.
+    /// Safe to read from the UI thread while playback is active.
+    /// </summary>
+    public TimeSpan TotalTime => _reader?.TotalTime ?? TimeSpan.Zero;
+
+    /// <summary>
     /// Raised when playback stops — either naturally (end of file) or via <see cref="Stop"/>.
     /// Raised on the NAudio output thread; marshal to the UI thread before touching UI.
     /// </summary>
