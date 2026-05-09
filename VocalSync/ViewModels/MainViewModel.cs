@@ -4,6 +4,7 @@ using System.Globalization;
 using System.IO;
 using System.Runtime.CompilerServices;
 using System.Windows;
+using System.Windows.Threading;
 using NAudio.Wave;
 using VocalSync.Models;
 using VocalSync.Services;
@@ -459,6 +460,7 @@ public class MainViewModel : INotifyPropertyChanged, IDisposable
         }
         catch (Exception ex)
         {
+            ApplyPlaybackIdleState(force: true);
             MessageBox.Show(
                 $"Could not play recording:\n{ex.Message}",
                 "VocalSync",
@@ -467,28 +469,51 @@ public class MainViewModel : INotifyPropertyChanged, IDisposable
         }
     }
 
+    /// <summary>
+    /// User-initiated stop: <see cref="WavPlaybackService.Stop"/> unsubscribes
+    /// <c>PlaybackStopped</c> before stopping, so the VM must sync UI here — it is not raised.
+    /// </summary>
     private void StopPlayback()
     {
         _playback.Stop();
-        // IsPlayingBack is reset in OnPlaybackStopped
+        ApplyPlaybackIdleState(force: true);
+    }
+
+    /// <summary>
+    /// Single place to clear playback UI. When <paramref name="force"/> is false, ignores stale
+    /// natural-stop callbacks if a new <see cref="WavPlaybackService.Play"/> session is already active.
+    /// </summary>
+    private void ApplyPlaybackIdleState(bool force = false)
+    {
+        if (!force && _playback.IsPlaying)
+            return;
+
+        IsPlayingBack = false;
+        if (IsRunning)
+            StatusText = "Listening...";
+        else
+        {
+            string label = PlaybackFileNameDisplay;
+            StatusText = string.IsNullOrEmpty(label)
+                ? "Sing or hum into your microphone"
+                : $"Ready  ·  {label}";
+        }
     }
 
     private void OnPlaybackStopped()
     {
         // Raised on the NAudio output thread — marshal to UI thread.
-        Application.Current?.Dispatcher.BeginInvoke(() =>
+        var disp = Application.Current?.Dispatcher;
+        if (disp == null || disp.HasShutdownStarted)
         {
-            IsPlayingBack = false;
-            if (IsRunning)
-                StatusText = "Listening...";
-            else
-            {
-                string label = PlaybackFileNameDisplay;
-                StatusText = string.IsNullOrEmpty(label)
-                    ? "Sing or hum into your microphone"
-                    : $"Ready  ·  {label}";
-            }
-        });
+            _isPlayingBack = false;
+            return;
+        }
+
+        if (disp.CheckAccess())
+            ApplyPlaybackIdleState(force: false);
+        else
+            disp.BeginInvoke(() => ApplyPlaybackIdleState(force: false), DispatcherPriority.Normal);
     }
 
     // ── Workspace (embedded analysis) ────────────────────────────────────
@@ -709,10 +734,8 @@ public class MainViewModel : INotifyPropertyChanged, IDisposable
         if (_isRecording)
             StopRecording();
 
-        _audioCapture.Stop();
-        _monitor.Stop();
-        _stabilizer.Reset();
-        _smoothedLevel = 0f;
+        // Clear running flag before stopping hardware so late capture callbacks
+        // do not push "Listening..." / waveform updates after the user sees Stop.
         IsRunning = false;
         ToggleButtonLabel = "Start";
         NoteName = "--";
@@ -722,6 +745,11 @@ public class MainViewModel : INotifyPropertyChanged, IDisposable
             : $"Ready  ·  {LastRecordingName}";
         InputLevel = 0;
         WaveformDisplay = [];
+
+        _audioCapture.Stop();
+        _monitor.Stop();
+        _stabilizer.Reset();
+        _smoothedLevel = 0f;
     }
 
     // ── Audio Pipeline ─────────────────────────────────────────────────────
@@ -765,6 +793,9 @@ public class MainViewModel : INotifyPropertyChanged, IDisposable
 
     private void ApplyResult(StabilizedPitch stable, float level, float[] waveform)
     {
+        if (!IsRunning)
+            return;
+
         // Pitch / note display
         if (stable.HasPitch)
         {
@@ -820,6 +851,12 @@ public class MainViewModel : INotifyPropertyChanged, IDisposable
     {
         _workspaceLoadCts?.Cancel();
         _workspaceLoadCts?.Dispose();
+
+        // StopPlayback: WavPlaybackService.Stop does not raise PlaybackStopped — sync UI explicitly.
+        StopPlayback();
+        if (_isRunning)
+            StopCapture();
+
         _audioCapture.Dispose();
         _monitor.Dispose();
         _recorder.Dispose();
