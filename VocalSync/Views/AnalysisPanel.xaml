@@ -187,35 +187,40 @@
             </Grid>
         </Border>
 
-        <!-- HEADER + GRAPH + LEGEND: star row gives graph vertical room without scrollbar -->
-        <Grid>
+        <!-- HEADER + GRAPH + LEGEND: graph row is * but MaxHeight-capped so metadata/legend/correction never squeeze -->
+        <Grid UseLayoutRounding="True">
             <Grid.RowDefinitions>
                 <RowDefinition Height="Auto"/>
-                <RowDefinition Height="*" MinHeight="120"/>
+                <RowDefinition Height="*" MinHeight="120" MaxHeight="280"/>
                 <RowDefinition Height="Auto"/>
             </Grid.RowDefinitions>
 
                 <!-- Header -->
-                <Grid Grid.Row="0" Margin="0,0,0,6">
+                <Grid Grid.Row="0" Margin="0,0,0,6" VerticalAlignment="Top">
                     <Grid.ColumnDefinitions>
                         <ColumnDefinition Width="*"/>
                         <ColumnDefinition Width="Auto"/>
                     </Grid.ColumnDefinitions>
 
-                    <StackPanel Grid.Column="0" Orientation="Vertical">
+                    <StackPanel Grid.Column="0" Orientation="Vertical" VerticalAlignment="Top">
                         <TextBlock x:Name="FileNameText"
                                    FontFamily="Segoe UI"
                                    FontSize="12"
                                    FontWeight="SemiBold"
                                    Foreground="#FFCCCCCC"
+                                   TextTrimming="CharacterEllipsis"
                                    Text="—"/>
-                        <TextBlock x:Name="StatsText"
-                                   FontFamily="Segoe UI"
-                                   FontSize="10"
-                                   Foreground="#FF666666"
-                                   Margin="0,2,0,0"
-                                   TextWrapping="Wrap"
-                                   Text="Select a recording in the library"/>
+                        <ScrollViewer Margin="0,2,0,0"
+                                      MaxHeight="72"
+                                      VerticalScrollBarVisibility="Auto"
+                                      HorizontalScrollBarVisibility="Disabled">
+                            <TextBlock x:Name="StatsText"
+                                       FontFamily="Segoe UI"
+                                       FontSize="10"
+                                       Foreground="#FF666666"
+                                       TextWrapping="Wrap"
+                                       Text="Select a recording in the library"/>
+                        </ScrollViewer>
                     </StackPanel>
 
                     <Border Grid.Column="1"
@@ -233,19 +238,25 @@
                     </Border>
                 </Grid>
 
-                <!-- Graph: stretches with allocated workspace height -->
+                <!-- Graph: flexes with splitter/window but bounded (row + border MaxHeight) -->
                 <Border Grid.Row="1"
                         Background="#FF121212"
                         CornerRadius="6"
                         ClipToBounds="True"
-                        MinHeight="120">
+                        VerticalAlignment="Top"
+                        MinHeight="120"
+                        MaxHeight="280"
+                        HorizontalAlignment="Stretch">
                     <Image x:Name="GraphImage"
                            Stretch="Fill"
                            RenderOptions.BitmapScalingMode="NearestNeighbor"/>
                 </Border>
 
                 <!-- Legend -->
-                <StackPanel Grid.Row="2" Orientation="Horizontal" VerticalAlignment="Center" Margin="0,4,0,0">
+                <StackPanel Grid.Row="2"
+                            Orientation="Horizontal"
+                            VerticalAlignment="Top"
+                            Margin="0,6,0,0">
                     <Ellipse Width="8" Height="8" Fill="#FF1DB954" Margin="0,0,4,0" VerticalAlignment="Center"/>
                     <TextBlock Text="Voiced (high confidence)"
                                FontFamily="Segoe UI" FontSize="10" Foreground="#FF555555" Margin="0,0,16,0" VerticalAlignment="Center"/>
