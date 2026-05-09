@@ -1097,6 +1097,8 @@ public partial class AnalysisPanel : UserControl
         PlayheadGlow.X1 = PlayheadGlow.X2 = 0;
         PlayheadGlow.Y1 = 0;
         PlayheadGlow.Y2 = h;
+
+        HideActivePitchMarker();
     }
 
     private void UpdatePlayhead()
@@ -1110,7 +1112,10 @@ public partial class AnalysisPanel : UserControl
         double graphW = GraphContentGrid.ActualWidth;
         double graphH = GraphContentGrid.ActualHeight;
         if (graphW < 2 || graphH < 2)
+        {
+            HideActivePitchMarker();
             return;
+        }
 
         TimeSpan current;
         TimeSpan total;
@@ -1125,7 +1130,11 @@ public partial class AnalysisPanel : UserControl
             total   = _workspacePlaybackVm.MainPlaybackDuration;
         }
 
-        if (total.TotalSeconds <= 0) return;
+        if (total.TotalSeconds <= 0)
+        {
+            HideActivePitchMarker();
+            return;
+        }
 
         double norm = Math.Clamp(current.TotalSeconds / total.TotalSeconds, 0.0, 1.0);
         // Same horizontal mapping as contour: tNorm * (w - 1)
@@ -1143,6 +1152,99 @@ public partial class AnalysisPanel : UserControl
         PlayheadGlow.X1 = PlayheadGlow.X2 = x;
         PlayheadGlow.Y1 = 0;
         PlayheadGlow.Y2 = graphH;
+
+        UpdateActivePitchHighlight(x, graphH, (float)current.TotalSeconds);
+    }
+
+    /// <summary>Positions active-pitch marker at playhead X; Y from nearest voiced frame (overlay only).</summary>
+    private void UpdateActivePitchHighlight(double playheadX, double graphH, float timeSeconds)
+    {
+        if (_points.Length == 0 || graphH < 2)
+        {
+            HideActivePitchMarker();
+            return;
+        }
+
+        int h = Math.Max(2, (int)Math.Round(graphH));
+        if (!TryGetActiveVoicedPointNearTime(timeSeconds, h, out int py))
+        {
+            HideActivePitchMarker();
+            return;
+        }
+
+        double cy = py + 0.5;
+
+        const double glowSize = 16;
+        Canvas.SetLeft(ActivePitchGlow, playheadX - glowSize * 0.5);
+        Canvas.SetTop(ActivePitchGlow, cy - glowSize * 0.5);
+        ActivePitchGlow.Visibility = Visibility.Visible;
+
+        const double dotSize = 7;
+        Canvas.SetLeft(ActivePitchDot, playheadX - dotSize * 0.5);
+        Canvas.SetTop(ActivePitchDot, cy - dotSize * 0.5);
+        ActivePitchDot.Visibility = Visibility.Visible;
+    }
+
+    private void HideActivePitchMarker()
+    {
+        ActivePitchGlow.Visibility  = Visibility.Collapsed;
+        ActivePitchDot.Visibility   = Visibility.Collapsed;
+    }
+
+    /// <summary>Nearest voiced frame in a small window around <paramref name="timeSeconds"/> that lies in the current graph MIDI window.</summary>
+    private bool TryGetActiveVoicedPointNearTime(float timeSeconds, int h, out int py)
+    {
+        py = 0;
+        if (_points.Length == 0) return false;
+
+        int c = FindClosestPointIndexByTime(_points, timeSeconds);
+        if (c < 0) return false;
+
+        int lo = Math.Max(0, c - 12);
+        int hi = Math.Min(_points.Length - 1, c + 12);
+        int bestI = -1;
+        float bestDt = float.MaxValue;
+        for (int i = lo; i <= hi; i++)
+        {
+            PitchPoint p = _points[i];
+            if (!p.IsVoiced) continue;
+            if (p.MidiNote < _renderMidiMin || p.MidiNote > _renderMidiMax) continue;
+            if (p.MidiNote < MidiAbsMin || p.MidiNote > MidiAbsMax) continue;
+            float dt = Math.Abs(p.TimeSeconds - timeSeconds);
+            if (dt < bestDt)
+            {
+                bestDt = dt;
+                bestI = i;
+            }
+        }
+
+        if (bestI < 0) return false;
+
+        py = Math.Clamp(MidiToY(_points[bestI].MidiNote, h, _renderMidiMin, _renderMidiMax), 0, h - 1);
+        return true;
+    }
+
+    /// <summary>Index of analysis frame closest in time to <paramref name="t"/> (assumes non-decreasing <see cref="PitchPoint.TimeSeconds"/>).</summary>
+    private static int FindClosestPointIndexByTime(PitchPoint[] points, float t)
+    {
+        int n = points.Length;
+        if (n == 0) return -1;
+
+        int lo = 0, hi = n - 1;
+        while (lo <= hi)
+        {
+            int mid = (lo + hi) >> 1;
+            if (points[mid].TimeSeconds < t) lo = mid + 1;
+            else hi = mid - 1;
+        }
+
+        if (lo <= 0) return 0;
+        if (lo >= n) return n - 1;
+
+        int prev = lo - 1;
+        float dPrev = t - points[prev].TimeSeconds;
+        float dNext = points[lo].TimeSeconds - t;
+        return dPrev <= dNext ? prev : lo;
     }
 
     /// <summary>1px Bresenham line on a BGRA32 buffer (pitch contour only — no fills).</summary>

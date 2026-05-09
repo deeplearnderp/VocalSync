@@ -301,6 +301,20 @@
                                       StrokeThickness="1"
                                       IsHitTestVisible="False"
                                       SnapsToDevicePixels="True"/>
+                                <!-- Active pitch: same layer as playhead; bitmap unchanged during playback -->
+                                <Ellipse x:Name="ActivePitchGlow"
+                                         Width="16" Height="16"
+                                         Visibility="Collapsed"
+                                         IsHitTestVisible="False"
+                                         Fill="#3828C878"
+                                         Opacity="0.9"/>
+                                <Ellipse x:Name="ActivePitchDot"
+                                         Width="7" Height="7"
+                                         Visibility="Collapsed"
+                                         IsHitTestVisible="False"
+                                         Fill="#FF4AD688"
+                                         Stroke="#FF1A8A4A"
+                                         StrokeThickness="1"/>
                             </Canvas>
                         </Grid>
                     </Border>
