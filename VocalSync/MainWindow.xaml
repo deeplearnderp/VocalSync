@@ -5,10 +5,11 @@
         xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
         xmlns:local="clr-namespace:VocalSync"
         xmlns:views="clr-namespace:VocalSync.Views"
+        xmlns:models="clr-namespace:VocalSync.Models"
         mc:Ignorable="d"
         Title="VocalSync"
-        Height="740" Width="520"
-        MinHeight="680" MinWidth="420"
+        Height="820" Width="1040"
+        MinHeight="700" MinWidth="760"
         WindowStartupLocation="CenterScreen"
         Background="#FF121212"
         Foreground="#FFFFFFFF">
@@ -127,17 +128,97 @@
         </Style>
     </Window.Resources>
 
-    <!-- Root grid -->
+    <!-- Root: library (live workspace) + main column (live capture + embedded analysis) -->
     <Grid>
+        <Grid.ColumnDefinitions>
+            <ColumnDefinition Width="232" MinWidth="200"/>
+            <ColumnDefinition Width="*"/>
+        </Grid.ColumnDefinitions>
+
+        <!-- Recording library -->
+        <Border Grid.Column="0"
+                Margin="12,12,8,12"
+                Padding="10,10,10,10"
+                Background="#FF0D0D0D"
+                BorderBrush="#FF1E1E1E"
+                BorderThickness="1"
+                CornerRadius="8">
+            <DockPanel LastChildFill="True">
+                <TextBlock DockPanel.Dock="Top"
+                           Text="RECORDINGS"
+                           FontFamily="Segoe UI"
+                           FontSize="9"
+                           FontWeight="SemiBold"
+                           Foreground="#FF444444"
+                           Margin="2,0,0,8"/>
+                <ListBox ItemsSource="{Binding Recordings}"
+                         SelectedItem="{Binding SelectedRecording}"
+                         Background="Transparent"
+                         BorderThickness="0"
+                         ScrollViewer.HorizontalScrollBarVisibility="Disabled">
+                    <ListBox.Resources>
+                        <Style TargetType="ListBoxItem">
+                            <Setter Property="Padding" Value="8,6"/>
+                            <Setter Property="Margin" Value="0,0,0,4"/>
+                            <Setter Property="HorizontalContentAlignment" Value="Stretch"/>
+                            <Setter Property="Template">
+                                <Setter.Value>
+                                    <ControlTemplate TargetType="ListBoxItem">
+                                        <Border x:Name="Bd"
+                                                Background="Transparent"
+                                                CornerRadius="4"
+                                                Padding="{TemplateBinding Padding}">
+                                            <ContentPresenter/>
+                                        </Border>
+                                        <ControlTemplate.Triggers>
+                                            <Trigger Property="IsMouseOver" Value="True">
+                                                <Setter TargetName="Bd" Property="Background" Value="#FF1A1A1A"/>
+                                            </Trigger>
+                                            <Trigger Property="IsSelected" Value="True">
+                                                <Setter TargetName="Bd" Property="Background" Value="#FF142818"/>
+                                                <Setter TargetName="Bd" Property="BorderBrush" Value="#FF1DB954"/>
+                                                <Setter TargetName="Bd" Property="BorderThickness" Value="1"/>
+                                            </Trigger>
+                                        </ControlTemplate.Triggers>
+                                    </ControlTemplate>
+                                </Setter.Value>
+                            </Setter>
+                        </Style>
+                    </ListBox.Resources>
+                    <ListBox.ItemTemplate>
+                        <DataTemplate DataType="{x:Type models:RecordingEntry}">
+                            <StackPanel>
+                                <TextBlock Text="{Binding FileName}"
+                                           FontFamily="Segoe UI"
+                                           FontSize="11"
+                                           FontWeight="SemiBold"
+                                           Foreground="#FFCCCCCC"
+                                           TextTrimming="CharacterEllipsis"
+                                           ToolTip="{Binding FilePath}"/>
+                                <TextBlock Text="{Binding SummaryLine}"
+                                           FontFamily="Segoe UI"
+                                           FontSize="9"
+                                           Foreground="#FF555555"
+                                           TextWrapping="Wrap"
+                                           Margin="0,2,0,0"/>
+                            </StackPanel>
+                        </DataTemplate>
+                    </ListBox.ItemTemplate>
+                </ListBox>
+            </DockPanel>
+        </Border>
+
+        <Grid Grid.Column="1" Margin="0,0,12,0">
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto"/>  <!-- title -->
-            <RowDefinition Height="*"/>     <!-- note display -->
+            <RowDefinition Height="Auto" MinHeight="176"/>     <!-- note display (live) -->
             <RowDefinition Height="Auto"/>  <!-- frequency -->
             <RowDefinition Height="Auto"/>  <!-- level meter label + bar -->
             <RowDefinition Height="120"/>   <!-- waveform -->
             <RowDefinition Height="Auto"/>  <!-- device selector -->
             <RowDefinition Height="Auto"/>  <!-- monitor controls -->
             <RowDefinition Height="Auto"/>  <!-- recording controls -->
+            <RowDefinition Height="*" MinHeight="260"/> <!-- workspace: analysis + correction -->
             <RowDefinition Height="Auto"/>  <!-- button -->
             <RowDefinition Height="36"/>    <!-- status -->
         </Grid.RowDefinitions>
@@ -332,14 +413,13 @@
                        MinWidth="36"/>
         </Grid>
 
-        <!-- Recording controls -->
+        <!-- Recording controls (live) — playback uses library selection or last take -->
         <Grid Grid.Row="7" Margin="20,4,20,4">
             <Grid.ColumnDefinitions>
-                <ColumnDefinition Width="Auto"/>   <!-- label -->
-                <ColumnDefinition Width="Auto"/>   <!-- rec button -->
-                <ColumnDefinition Width="Auto"/>   <!-- play button -->
-                <ColumnDefinition Width="Auto"/>   <!-- analyze button -->
-                <ColumnDefinition Width="*"/>      <!-- filename -->
+                <ColumnDefinition Width="Auto"/>
+                <ColumnDefinition Width="Auto"/>
+                <ColumnDefinition Width="Auto"/>
+                <ColumnDefinition Width="*"/>
             </Grid.ColumnDefinitions>
 
             <TextBlock Grid.Column="0"
@@ -402,13 +482,13 @@
                 </Button.Style>
             </Button>
 
-            <!-- Play / Stop playback button -->
+            <!-- Play / Stop playback (original WAV for current target) -->
             <Button Grid.Column="2"
                     Content="{Binding PlayButtonLabel}"
                     IsEnabled="{Binding CanPlayback}"
                     Click="PlayButton_Click"
                     Margin="0,0,6,0"
-                    ToolTip="Play last recording">
+                    ToolTip="Play selected library item, or last recording if none selected">
                 <Button.Style>
                     <Style TargetType="Button">
                         <Setter Property="Background"      Value="#FF1E1E1E"/>
@@ -446,69 +526,31 @@
                 </Button.Style>
             </Button>
 
-            <!-- Analyze button -->
-            <Button Grid.Column="3"
-                    Content="📊 Analyze"
-                    IsEnabled="{Binding CanAnalyze}"
-                    Click="AnalyzeButton_Click"
-                    Margin="0,0,0,0"
-                    ToolTip="Offline pitch analysis of last recording">
-                <Button.Style>
-                    <Style TargetType="Button">
-                        <Setter Property="Background"      Value="#FF1E1E1E"/>
-                        <Setter Property="Foreground"      Value="#FF888888"/>
-                        <Setter Property="BorderBrush"     Value="#FF2A2A2A"/>
-                        <Setter Property="BorderThickness" Value="1"/>
-                        <Setter Property="FontFamily"      Value="Segoe UI"/>
-                        <Setter Property="FontSize"        Value="11"/>
-                        <Setter Property="Width"           Value="80"/>
-                        <Setter Property="Height"          Value="26"/>
-                        <Setter Property="Cursor"          Value="Hand"/>
-                        <Setter Property="Template">
-                            <Setter.Value>
-                                <ControlTemplate TargetType="Button">
-                                    <Border Background="{TemplateBinding Background}"
-                                            BorderBrush="{TemplateBinding BorderBrush}"
-                                            BorderThickness="{TemplateBinding BorderThickness}"
-                                            CornerRadius="4">
-                                        <ContentPresenter HorizontalAlignment="Center"
-                                                          VerticalAlignment="Center"/>
-                                    </Border>
-                                    <ControlTemplate.Triggers>
-                                        <Trigger Property="IsMouseOver" Value="True">
-                                            <Setter Property="Background" Value="#FF2A2A2A"/>
-                                            <Setter Property="Foreground" Value="#FFBBBBBB"/>
-                                        </Trigger>
-                                        <Trigger Property="IsEnabled" Value="False">
-                                            <Setter Property="Opacity" Value="0.35"/>
-                                        </Trigger>
-                                    </ControlTemplate.Triggers>
-                                </ControlTemplate>
-                            </Setter.Value>
-                        </Setter>
-                        <Style.Triggers>
-                            <DataTrigger Binding="{Binding IsAnalyzing}" Value="True">
-                                <Setter Property="Foreground" Value="#FF555555"/>
-                            </DataTrigger>
-                        </Style.Triggers>
-                    </Style>
-                </Button.Style>
-            </Button>
-
-            <!-- Last recording filename -->
-            <TextBlock Grid.Column="4"
-                       Text="{Binding LastRecordingName}"
+            <!-- Playback target (selection or last take) -->
+            <TextBlock Grid.Column="3"
+                       Text="{Binding PlaybackFileNameDisplay}"
                        FontFamily="Segoe UI"
                        FontSize="10"
                        Foreground="#FF444444"
                        VerticalAlignment="Center"
                        TextTrimming="CharacterEllipsis"
                        Margin="10,0,0,0"
-                       ToolTip="{Binding LastRecordingPath}"/>
+                       ToolTip="{Binding PlaybackTargetPath}"/>
         </Grid>
 
-        <!-- Start/Stop button -->
-        <Button Grid.Row="8"
+        <!-- Workspace: embedded analysis (replaces popup window) -->
+        <Border Grid.Row="8"
+                Margin="12,8,8,0"
+                Padding="12,0,12,0"
+                Background="Transparent">
+            <ScrollViewer VerticalScrollBarVisibility="Auto"
+                          HorizontalScrollBarVisibility="Disabled">
+                <views:AnalysisPanel x:Name="WorkspacePanel"/>
+            </ScrollViewer>
+        </Border>
+
+        <!-- Start/Stop capture -->
+        <Button Grid.Row="9"
                 Content="{Binding ToggleButtonLabel}"
                 Style="{StaticResource ToggleButtonStyle}"
                 HorizontalAlignment="Center"
@@ -516,12 +558,13 @@
                 Click="ToggleButton_Click"/>
 
         <!-- Status text -->
-        <TextBlock Grid.Row="9"
+        <TextBlock Grid.Row="10"
                    Text="{Binding StatusText}"
                    FontFamily="Segoe UI"
                    FontSize="11"
                    Foreground="#FF555555"
                    HorizontalAlignment="Center"
                    VerticalAlignment="Center"/>
+        </Grid>
     </Grid>
 </Window>

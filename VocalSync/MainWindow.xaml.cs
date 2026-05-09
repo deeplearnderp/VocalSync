@@ -1,11 +1,12 @@
 using System.ComponentModel;
 using System.Windows;
+using VocalSync.Models;
 using VocalSync.ViewModels;
 
 namespace VocalSync;
 
 /// <summary>
-/// Interaction logic for MainWindow.xaml.
+/// Interaction logic for MainWindow.
 ///
 /// The <see cref="Views.SignalVisualizer"/> is a performance-sensitive custom
 /// control that bypasses the WPF binding system intentionally (it writes pixels
@@ -22,8 +23,10 @@ public partial class MainWindow : Window
         InitializeComponent();
         DataContext = _viewModel;
 
-        // Forward visualization data from ViewModel to the custom control.
         _viewModel.PropertyChanged += OnViewModelPropertyChanged;
+        _viewModel.WorkspaceSessionChanged += OnWorkspaceSessionChanged;
+
+        WorkspacePanel.SetPlaybackDevice(_viewModel.SelectedOutputDeviceNumber);
     }
 
     private void ToggleButton_Click(object sender, RoutedEventArgs e)
@@ -33,7 +36,10 @@ public partial class MainWindow : Window
         => _viewModel.RefreshDevices();
 
     private void SettingsButton_Click(object sender, RoutedEventArgs e)
-        => _viewModel.OpenSettings(this);
+    {
+        _viewModel.OpenSettings(this);
+        WorkspacePanel.SetPlaybackDevice(_viewModel.SelectedOutputDeviceNumber);
+    }
 
     private void RecordButton_Click(object sender, RoutedEventArgs e)
         => _viewModel.ToggleRecording();
@@ -41,8 +47,13 @@ public partial class MainWindow : Window
     private void PlayButton_Click(object sender, RoutedEventArgs e)
         => _viewModel.TogglePlayback();
 
-    private void AnalyzeButton_Click(object sender, RoutedEventArgs e)
-        => _viewModel.AnalyzeLastRecording(this);
+    private void OnWorkspaceSessionChanged(PitchPoint[]? points, string? path)
+    {
+        if (points == null || path == null)
+            WorkspacePanel.Clear();
+        else
+            WorkspacePanel.SetAnalysis(points, path);
+    }
 
     private void OnViewModelPropertyChanged(object? sender, PropertyChangedEventArgs e)
     {
@@ -61,6 +72,7 @@ public partial class MainWindow : Window
 
     protected override void OnClosed(EventArgs e)
     {
+        _viewModel.WorkspaceSessionChanged -= OnWorkspaceSessionChanged;
         _viewModel.PropertyChanged -= OnViewModelPropertyChanged;
         _viewModel.Dispose();
         base.OnClosed(e);

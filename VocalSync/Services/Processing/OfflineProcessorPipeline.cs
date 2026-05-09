@@ -17,7 +17,7 @@ namespace VocalSync.Services.Processing;
 ///   - No feedback loops.
 ///   - No hot-swap or runtime registration.
 ///
-/// Processors are added by the call site (e.g. AnalysisWindow or a future
+/// Processors are added by the call site (e.g. AnalysisPanel or a future
 /// RenderViewModel) — the pipeline has no awareness of which processors exist.
 ///
 /// Progress reporting:

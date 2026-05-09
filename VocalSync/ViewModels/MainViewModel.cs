@@ -1,7 +1,10 @@
+using System.Collections.ObjectModel;
 using System.ComponentModel;
+using System.Globalization;
 using System.IO;
 using System.Runtime.CompilerServices;
 using System.Windows;
+using NAudio.Wave;
 using VocalSync.Models;
 using VocalSync.Services;
 
@@ -21,6 +24,8 @@ public class MainViewModel : INotifyPropertyChanged, IDisposable
     private readonly WavRecorderService _recorder = new();
     private readonly WavPlaybackService _playback = new();
     private readonly OfflineAnalysisService _analyser = new();
+
+    private CancellationTokenSource? _workspaceLoadCts;
 
     // ── Visualization state ────────────────────────────────────────────────
     // Fixed-size snapshot array reused every frame — no per-callback allocation.
@@ -190,7 +195,6 @@ public class MainViewModel : INotifyPropertyChanged, IDisposable
             {
                 OnPropertyChanged(nameof(CanRecord));
                 OnPropertyChanged(nameof(CanPlayback));
-                OnPropertyChanged(nameof(CanAnalyze));
                 OnPropertyChanged(nameof(RecordButtonLabel));
             }
         }
@@ -206,7 +210,6 @@ public class MainViewModel : INotifyPropertyChanged, IDisposable
             {
                 OnPropertyChanged(nameof(CanRecord));
                 OnPropertyChanged(nameof(CanPlayback));
-                OnPropertyChanged(nameof(CanAnalyze));
                 OnPropertyChanged(nameof(PlayButtonLabel));
             }
         }
@@ -222,7 +225,7 @@ public class MainViewModel : INotifyPropertyChanged, IDisposable
             if (SetField(ref _lastRecordingPath, value))
             {
                 OnPropertyChanged(nameof(LastRecordingName));
-                OnPropertyChanged(nameof(CanAnalyze));
+                RaisePlaybackTargetChanged();
             }
         }
     }
@@ -235,28 +238,64 @@ public class MainViewModel : INotifyPropertyChanged, IDisposable
     /// <summary>Recording is only possible when capture is running and not already recording/playing back.</summary>
     public bool CanRecord => IsRunning && !_isPlayingBack;
 
-    /// <summary>Playback is only possible when there is a recording and not currently recording.</summary>
-    public bool CanPlayback => !string.IsNullOrEmpty(_lastRecordingPath) && !_isRecording;
+    /// <summary>Playback targets the library selection when set; otherwise the last saved recording.</summary>
+    public bool CanPlayback => PlaybackTargetPath != null && !_isRecording;
 
     public string RecordButtonLabel => _isRecording ? "■ Stop" : "⏺ Rec";
     public string PlayButtonLabel   => _isPlayingBack ? "■ Stop" : "▶ Play";
 
-    private bool _isAnalyzing;
-    public bool IsAnalyzing
+    /// <summary>In-memory library of WAVs in the Recordings folder (newest first).</summary>
+    public ObservableCollection<RecordingEntry> Recordings { get; } = [];
+
+    private RecordingEntry? _selectedRecording;
+    /// <summary>When set, loads offline analysis into the workspace panel (embedded, not a popup).</summary>
+    public RecordingEntry? SelectedRecording
     {
-        get => _isAnalyzing;
-        private set
+        get => _selectedRecording;
+        set
         {
-            if (SetField(ref _isAnalyzing, value))
-                OnPropertyChanged(nameof(CanAnalyze));
+            if (value != null
+                && _selectedRecording != null
+                && string.Equals(value.FilePath, _selectedRecording.FilePath, StringComparison.OrdinalIgnoreCase))
+            {
+                if (!ReferenceEquals(_selectedRecording, value))
+                {
+                    _selectedRecording = value;
+                    OnPropertyChanged();
+                }
+                return;
+            }
+
+            if (ReferenceEquals(_selectedRecording, value)) return;
+
+            _selectedRecording = value;
+            OnPropertyChanged();
+            RaisePlaybackTargetChanged();
+
+            _workspaceLoadCts?.Cancel();
+            _workspaceLoadCts = new CancellationTokenSource();
+            _ = LoadWorkspaceAsync(_workspaceLoadCts.Token);
         }
     }
 
-    /// <summary>Analysis is available when a recording exists and no other audio operation is running.</summary>
-    public bool CanAnalyze => !string.IsNullOrEmpty(_lastRecordingPath)
-                           && !_isRecording
-                           && !_isPlayingBack
-                           && !_isAnalyzing;
+    /// <summary>Fired when the embedded workspace should show new analysis or clear (null).</summary>
+    public event Action<PitchPoint[]?, string?>? WorkspaceSessionChanged;
+
+    /// <summary>Effective path for the main Play button.</summary>
+    public string? PlaybackTargetPath
+    {
+        get
+        {
+            if (_selectedRecording != null && File.Exists(_selectedRecording.FilePath))
+                return _selectedRecording.FilePath;
+            if (!string.IsNullOrEmpty(_lastRecordingPath) && File.Exists(_lastRecordingPath))
+                return _lastRecordingPath;
+            return null;
+        }
+    }
+
+    public string PlaybackFileNameDisplay =>
+        string.IsNullOrEmpty(PlaybackTargetPath) ? string.Empty : Path.GetFileName(PlaybackTargetPath);
 
     // InputLevel: 0.0–1.0, pre-smoothed for the level meter.
     private double _inputLevel;
@@ -283,6 +322,7 @@ public class MainViewModel : INotifyPropertyChanged, IDisposable
         _audioCapture.RawBufferReady += OnRawBufferReady;
         _playback.PlaybackStopped += OnPlaybackStopped;
         RefreshDevices();
+        RefreshRecordingLibrary(selectPath: null);
     }
 
     // ── Commands ───────────────────────────────────────────────────────────
@@ -379,6 +419,7 @@ public class MainViewModel : INotifyPropertyChanged, IDisposable
         LastRecordingPath = _currentRecordingPath;
         _currentRecordingPath = string.Empty;
         StatusText = $"Saved: {LastRecordingName}";
+        RefreshRecordingLibrary(selectPath: LastRecordingPath);
     }
 
     /// <summary>
@@ -397,20 +438,24 @@ public class MainViewModel : INotifyPropertyChanged, IDisposable
 
     private void StartPlayback()
     {
-        if (string.IsNullOrEmpty(_lastRecordingPath)) return;
-        if (!File.Exists(_lastRecordingPath))
+        string? path = PlaybackTargetPath;
+        if (string.IsNullOrEmpty(path)) return;
+        if (!File.Exists(path))
         {
             StatusText = "Recording file not found";
-            LastRecordingPath = string.Empty;
+            if (string.Equals(path, _lastRecordingPath, StringComparison.OrdinalIgnoreCase))
+                LastRecordingPath = string.Empty;
+            RefreshRecordingLibrary(selectPath: SelectedRecording?.FilePath);
+            RaisePlaybackTargetChanged();
             return;
         }
 
         try
         {
             _playback.SetDevice(SelectedOutputDeviceNumber);
-            _playback.Play(_lastRecordingPath);
+            _playback.Play(path);
             IsPlayingBack = true;
-            StatusText = $"Playing: {LastRecordingName}";
+            StatusText = $"Playing: {Path.GetFileName(path)}";
         }
         catch (Exception ex)
         {
@@ -437,59 +482,171 @@ public class MainViewModel : INotifyPropertyChanged, IDisposable
             if (IsRunning)
                 StatusText = "Listening...";
             else
-                StatusText = string.IsNullOrEmpty(_lastRecordingPath)
+            {
+                string label = PlaybackFileNameDisplay;
+                StatusText = string.IsNullOrEmpty(label)
                     ? "Sing or hum into your microphone"
-                    : $"Ready  ·  {LastRecordingName}";
+                    : $"Ready  ·  {label}";
+            }
         });
     }
 
-    // ── Analysis ──────────────────────────────────────────────────────────
+    // ── Workspace (embedded analysis) ────────────────────────────────────
 
-    /// <summary>
-    /// Runs offline pitch analysis on the last recording and opens the
-    /// analysis window showing the results. Runs the heavy work on a
-    /// background thread; UI is updated on completion.
-    /// </summary>
-    public async void AnalyzeLastRecording(Window owner)
+    private void RaisePlaybackTargetChanged()
     {
-        if (!CanAnalyze) return;
+        OnPropertyChanged(nameof(PlaybackTargetPath));
+        OnPropertyChanged(nameof(PlaybackFileNameDisplay));
+        OnPropertyChanged(nameof(CanPlayback));
+    }
 
-        string path = _lastRecordingPath;
-        IsAnalyzing = true;
-        StatusText = "Analysing...";
+    private static string RecordingsDirectory =>
+        Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "Recordings");
+
+    /// <summary>Rebuilds <see cref="Recordings"/> from disk. Optionally selects a path without re-analysing if unchanged.</summary>
+    public void RefreshRecordingLibrary(string? selectPath)
+    {
+        if (!Directory.Exists(RecordingsDirectory))
+        {
+            Recordings.Clear();
+            if (_selectedRecording != null)
+                SelectedRecording = null;
+            return;
+        }
+
+        var entries = new List<RecordingEntry>();
+        foreach (string path in Directory.EnumerateFiles(RecordingsDirectory, "*.wav", SearchOption.TopDirectoryOnly))
+        {
+            var fi = new FileInfo(path);
+            string name = fi.Name;
+            string kind = name.EndsWith("_corrected.wav", StringComparison.OrdinalIgnoreCase)
+                ? "Corrected"
+                : "Original";
+
+            DateTime ts = TryParseTimestampFromFilename(name)?.ToUniversalTime()
+                          ?? fi.LastWriteTimeUtc;
+
+            entries.Add(new RecordingEntry
+            {
+                FilePath   = path,
+                SourceKind = kind,
+                TimestampUtc = ts,
+                Duration   = TryGetWavDuration(path)
+            });
+        }
+
+        entries.Sort((a, b) => b.TimestampUtc.CompareTo(a.TimestampUtc));
+
+        Recordings.Clear();
+        foreach (RecordingEntry e in entries)
+            Recordings.Add(e);
+
+        if (string.IsNullOrEmpty(selectPath))
+            return;
+
+        RecordingEntry? match = entries.Find(e =>
+            string.Equals(e.FilePath, selectPath, StringComparison.OrdinalIgnoreCase));
+
+        if (match == null)
+            return;
+
+        // Setting SelectedRecording triggers analysis unless path matches current selection.
+        SelectedRecording = match;
+    }
+
+    private void RaiseWorkspaceSession(PitchPoint[]? points, string? path)
+    {
+        Application.Current?.Dispatcher.BeginInvoke(() =>
+            WorkspaceSessionChanged?.Invoke(points, path));
+    }
+
+    private async Task LoadWorkspaceAsync(CancellationToken cancel)
+    {
+        if (_selectedRecording == null)
+        {
+            RaiseWorkspaceSession(null, null);
+            return;
+        }
+
+        string path = _selectedRecording.FilePath;
+        RaiseWorkspaceSession(null, null);
 
         PitchPoint[] points;
         try
         {
-            points = await Task.Run(() => _analyser.Analyse(path));
+            points = await Task.Run(() => _analyser.Analyse(path), cancel);
+        }
+        catch (OperationCanceledException)
+        {
+            return;
         }
         catch (Exception ex)
         {
-            IsAnalyzing = false;
-            StatusText = $"Ready  ·  {LastRecordingName}";
-            MessageBox.Show(
-                $"Analysis failed:\n{ex.Message}",
-                "VocalSync",
-                MessageBoxButton.OK,
-                MessageBoxImage.Error);
+            Application.Current?.Dispatcher.Invoke(() =>
+                MessageBox.Show(
+                    $"Analysis failed:\n{ex.Message}",
+                    "VocalSync",
+                    MessageBoxButton.OK,
+                    MessageBoxImage.Error));
+            RaiseWorkspaceSession(null, null);
             return;
         }
 
-        IsAnalyzing = false;
-        StatusText = $"Ready  ·  {LastRecordingName}";
+        if (cancel.IsCancellationRequested) return;
+
+        if (_selectedRecording == null
+            || !string.Equals(_selectedRecording.FilePath, path, StringComparison.OrdinalIgnoreCase))
+            return;
 
         if (points.Length == 0)
         {
-            MessageBox.Show(
-                "No audio data found in the recording.",
-                "VocalSync — Analysis",
-                MessageBoxButton.OK,
-                MessageBoxImage.Information);
+            Application.Current?.Dispatcher.Invoke(() =>
+                MessageBox.Show(
+                    "No audio data found in the recording.",
+                    "VocalSync — Analysis",
+                    MessageBoxButton.OK,
+                    MessageBoxImage.Information));
+            RaiseWorkspaceSession(null, null);
             return;
         }
 
-        var win = new VocalSync.Views.AnalysisWindow(points, path) { Owner = owner };
-        win.Show(); // Non-modal — user can keep recording while reviewing
+        RaiseWorkspaceSession(points, path);
+    }
+
+    private static DateTime? TryParseTimestampFromFilename(string fileName)
+    {
+        string stem = Path.GetFileNameWithoutExtension(fileName);
+        if (stem.EndsWith("_corrected", StringComparison.OrdinalIgnoreCase))
+            stem = stem[..^"_corrected".Length];
+
+        const string prefix = "VocalSync_";
+        if (!stem.StartsWith(prefix, StringComparison.OrdinalIgnoreCase)) return null;
+
+        string rest = stem[prefix.Length..];
+        if (rest.Length < 15 || rest[8] != '_') return null;
+
+        if (DateTime.TryParseExact(
+                rest.AsSpan(0, 15),
+                "yyyyMMdd_HHmmss",
+                CultureInfo.InvariantCulture,
+                DateTimeStyles.AssumeUniversal | DateTimeStyles.AdjustToUniversal,
+                out DateTime dt))
+            return dt;
+
+        return null;
+    }
+
+    private static TimeSpan? TryGetWavDuration(string path)
+    {
+        try
+        {
+            using var reader = new AudioFileReader(path);
+            return reader.TotalTime;
+        }
+        catch
+        {
+            return null;
+        }
     }
 
     private void StartCapture()
@@ -661,6 +818,8 @@ public class MainViewModel : INotifyPropertyChanged, IDisposable
 
     public void Dispose()
     {
+        _workspaceLoadCts?.Cancel();
+        _workspaceLoadCts?.Dispose();
         _audioCapture.Dispose();
         _monitor.Dispose();
         _recorder.Dispose();

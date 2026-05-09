@@ -9,7 +9,7 @@ namespace VocalSync.Services;
 ///
 /// Internally delegates to <see cref="OfflineProcessorPipeline"/> with a single
 /// <see cref="PitchCorrectionProcessor"/>. This preserves the original public API
-/// so <see cref="Views.AnalysisWindow"/> requires no changes.
+/// so <see cref="Views.AnalysisPanel"/> requires no changes.
 ///
 /// To add a second processor after pitch correction (e.g. a future normaliser),
 /// add it to the pipeline in <see cref="Correct"/> — the call site is unaffected.
