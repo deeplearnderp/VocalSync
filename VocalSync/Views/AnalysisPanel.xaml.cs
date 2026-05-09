@@ -135,7 +135,6 @@ public partial class AnalysisPanel : UserControl
     /// One contiguous sung note for Melodyne-style blob visualization (grouped frames; no editing).
     /// Populated from existing <see cref="PitchPoint"/> timelines during render — not part of analysis DSP.
     /// </summary>
-#pragma warning disable CS0649 // Fields assigned when note grouping is implemented (Phase 2+)
     private sealed class NoteRegion
     {
         public float StartTime;
@@ -145,7 +144,94 @@ public partial class AnalysisPanel : UserControl
         public int MaxMidi;
         public float AverageConfidence;
     }
-#pragma warning restore CS0649
+
+    /// <summary>
+    /// Groups consecutive voiced frames that lie in <c>[midiMin,midiMax]</c> and share the same
+    /// <see cref="PitchPoint.MidiNote"/> into regions (same inclusion rule as <see cref="DrawContourStyled"/>).
+    /// Unvoiced, out-of-range, or MIDI change ends the current region. Visualization-only — not called from render yet.
+    /// </summary>
+    private static List<NoteRegion> BuildNoteRegions(PitchPoint[] points, int midiMin, int midiMax)
+    {
+        var regions = new List<NoteRegion>();
+        if (points.Length == 0)
+            return regions;
+
+        int?  runMidi     = null;
+        float runStart   = 0f;
+        float runEnd     = 0f;
+        int   runMinMidi = 0;
+        int   runMaxMidi = 0;
+        double confSum   = 0d;
+        int    confCount = 0;
+
+        void FlushRun()
+        {
+            if (runMidi == null || confCount == 0)
+                return;
+
+            regions.Add(new NoteRegion
+            {
+                StartTime           = runStart,
+                EndTime             = runEnd,
+                Midi                = runMidi.Value,
+                MinMidi             = runMinMidi,
+                MaxMidi             = runMaxMidi,
+                AverageConfidence   = (float)(confSum / confCount),
+            });
+
+            runMidi = null;
+            confSum   = 0d;
+            confCount = 0;
+        }
+
+        for (int i = 0; i < points.Length; i++)
+        {
+            PitchPoint p = points[i];
+            bool inWindow = p.IsVoiced && p.MidiNote >= midiMin && p.MidiNote <= midiMax;
+
+            if (!inWindow)
+            {
+                FlushRun();
+                continue;
+            }
+
+            int m = p.MidiNote;
+
+            if (runMidi == null)
+            {
+                runMidi     = m;
+                runStart    = p.TimeSeconds;
+                runEnd      = p.TimeSeconds;
+                runMinMidi  = m;
+                runMaxMidi  = m;
+                confSum     = p.Confidence;
+                confCount   = 1;
+                continue;
+            }
+
+            if (m != runMidi.Value)
+            {
+                FlushRun();
+                runMidi     = m;
+                runStart    = p.TimeSeconds;
+                runEnd      = p.TimeSeconds;
+                runMinMidi  = m;
+                runMaxMidi  = m;
+                confSum     = p.Confidence;
+                confCount   = 1;
+                continue;
+            }
+
+            runEnd = p.TimeSeconds;
+            if (m < runMinMidi) runMinMidi = m;
+            if (m > runMaxMidi) runMaxMidi = m;
+            confSum   += p.Confidence;
+            confCount += 1;
+        }
+
+        FlushRun();
+        return regions;
+    }
 
     // ── Render palette ────────────────────────────────────────────────────
     private static readonly int ColBackground   = Bgra(0x11, 0x11, 0x11);
