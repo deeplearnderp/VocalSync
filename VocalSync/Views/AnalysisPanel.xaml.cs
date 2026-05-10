@@ -295,7 +295,17 @@ public partial class AnalysisPanel : UserControl
     private int _blobHitBitmapH;
 
     private BlobHitRegion? _hoveredBlob;
+    /// <summary>Primary blob for single-note drag; null when zero or multiple <see cref="_selectedBlobs"/> entries.</summary>
     private BlobHitRegion? _selectedBlob;
+    /// <summary>All note blobs currently selected (click or marquee). Reference identity matches <see cref="_blobHitRegions"/> instances.</summary>
+    private readonly HashSet<BlobHitRegion> _selectedBlobs = new();
+
+    /// <summary>Click-drag marquee on empty graph area (bitmap hit test on mouse up).</summary>
+    private bool _isMarqueeSelecting;
+    private bool _marqueeVisible;
+    private Point _marqueeAnchorUi;
+    private Point _marqueeEndUi;
+    private const double MarqueeActivateMinPixels = 3.0;
 
     /// <summary>Drag-preview only — no analysis mutation.</summary>
     private bool _isDraggingBlob;
@@ -525,7 +535,9 @@ public partial class AnalysisPanel : UserControl
         _blobHitBitmapW = 0;
         _blobHitBitmapH = 0;
         _hoveredBlob = null;
+        _selectedBlobs.Clear();
         _selectedBlob = null;
+        ResetMarqueeState(releaseCapture: true);
         ResetBlobDragPreviewState();
         BlobInteractionCanvas.Children.Clear();
         GraphContentGrid.ToolTip = null;
@@ -737,7 +749,9 @@ public partial class AnalysisPanel : UserControl
             _blobHitBitmapW = 0;
             _blobHitBitmapH = 0;
             _hoveredBlob = null;
+            _selectedBlobs.Clear();
             _selectedBlob = null;
+            ResetMarqueeState(releaseCapture: true);
             ResetBlobDragPreviewState();
             BlobInteractionCanvas.Children.Clear();
             GraphContentGrid.ToolTip = null;
@@ -889,7 +903,9 @@ public partial class AnalysisPanel : UserControl
         // ── 5b. Note blobs (same Z-order as XAML: behind contour bitmaps) ─
         _blobHitRegions.Clear();
         _hoveredBlob = null;
+        _selectedBlobs.Clear();
         _selectedBlob = null;
+        ResetMarqueeState(releaseCapture: true);
         ResetBlobDragPreviewState();
         _blobHitBitmapW = w;
         _blobHitBitmapH = h;
@@ -1136,6 +1152,68 @@ public partial class AnalysisPanel : UserControl
         return null;
     }
 
+    private IEnumerable<BlobHitRegion> HitTestBlobsIntersectingBitmapRect(Rect bitmapRect)
+    {
+        // Top-most last in _blobHitRegions — yield in reverse so callers can prefer "top" if needed.
+        for (int i = _blobHitRegions.Count - 1; i >= 0; i--)
+        {
+            BlobHitRegion b = _blobHitRegions[i];
+            if (bitmapRect.IntersectsWith(b.Bounds))
+                yield return b;
+        }
+    }
+
+    private void ResetMarqueeState(bool releaseCapture)
+    {
+        _isMarqueeSelecting = false;
+        _marqueeVisible = false;
+        if (releaseCapture && GraphContentGrid.IsMouseCaptured && !_isDraggingBlob)
+            GraphContentGrid.ReleaseMouseCapture();
+    }
+
+    private void ClearBlobSelection()
+    {
+        _selectedBlobs.Clear();
+        _selectedBlob = null;
+    }
+
+    private void FinalizeMarqueeSelection(Point endUi)
+    {
+        _marqueeEndUi = endUi;
+        bool hadMarqueeDrag = _marqueeVisible;
+        ResetMarqueeState(releaseCapture: true);
+
+        if (!hadMarqueeDrag)
+        {
+            ClearBlobSelection();
+            GraphContentGrid.ToolTip = null;
+            return;
+        }
+
+        if (!TryGetBlobMouseToBitmapScale(out double sx, out double sy))
+        {
+            ClearBlobSelection();
+            GraphContentGrid.ToolTip = null;
+            return;
+        }
+
+        double x0 = Math.Min(_marqueeAnchorUi.X, _marqueeEndUi.X) * sx;
+        double y0 = Math.Min(_marqueeAnchorUi.Y, _marqueeEndUi.Y) * sy;
+        double x1 = Math.Max(_marqueeAnchorUi.X, _marqueeEndUi.X) * sx;
+        double y1 = Math.Max(_marqueeAnchorUi.Y, _marqueeEndUi.Y) * sy;
+        double rw = Math.Max(1e-6, x1 - x0);
+        double rh = Math.Max(1e-6, y1 - y0);
+        var bitmapRect = new Rect(x0, y0, rw, rh);
+
+        ClearBlobSelection();
+        foreach (BlobHitRegion b in HitTestBlobsIntersectingBitmapRect(bitmapRect))
+            _selectedBlobs.Add(b);
+
+        _selectedBlob = _selectedBlobs.Count == 1 ? _selectedBlobs.First() : null;
+        _hoveredBlob = null;
+        GraphContentGrid.ToolTip = null;
+    }
+
     private void ResetBlobDragPreviewState()
     {
         if (GraphContentGrid.IsMouseCaptured)
@@ -1149,6 +1227,21 @@ public partial class AnalysisPanel : UserControl
 
     private void GraphContentGrid_MouseMove(object sender, MouseEventArgs e)
     {
+        if (_isMarqueeSelecting)
+        {
+            Point pos = e.GetPosition(GraphContentGrid);
+            _marqueeEndUi = pos;
+            double dx = pos.X - _marqueeAnchorUi.X;
+            double dy = pos.Y - _marqueeAnchorUi.Y;
+            if (!_marqueeVisible
+                && (Math.Abs(dx) >= MarqueeActivateMinPixels || Math.Abs(dy) >= MarqueeActivateMinPixels))
+                _marqueeVisible = true;
+
+            GraphContentGrid.Cursor = _marqueeVisible ? Cursors.Cross : Cursors.Arrow;
+            RefreshBlobInteractionOverlay();
+            return;
+        }
+
         if (_isDraggingBlob && _dragBlob != null)
         {
             Point pos = e.GetPosition(GraphContentGrid);
@@ -1189,6 +1282,8 @@ public partial class AnalysisPanel : UserControl
     {
         if (_isDraggingBlob)
             return;
+        if (_isMarqueeSelecting)
+            return;
 
         bool hadHover = _hoveredBlob != null;
         _hoveredBlob = null;
@@ -1212,12 +1307,23 @@ public partial class AnalysisPanel : UserControl
 
         if (hit == null)
         {
-            _selectedBlob = null;
+            ResetMarqueeState(releaseCapture: false);
+            _isMarqueeSelecting = true;
+            _marqueeVisible = false;
+            _marqueeAnchorUi = pos;
+            _marqueeEndUi = pos;
+            GraphContentGrid.CaptureMouse();
+            GraphContentGrid.Cursor = Cursors.Arrow;
             RefreshBlobInteractionOverlay();
+            e.Handled = true;
             return;
         }
 
+        ResetMarqueeState(releaseCapture: true);
+
         _hoveredBlob = hit;
+        ClearBlobSelection();
+        _selectedBlobs.Add(hit);
         _selectedBlob = hit;
         _dragBlob = hit;
         _isDraggingBlob = true;
@@ -1232,6 +1338,23 @@ public partial class AnalysisPanel : UserControl
 
     private void GraphContentGrid_MouseLeftButtonUp(object sender, MouseButtonEventArgs e)
     {
+        if (_isMarqueeSelecting)
+        {
+            FinalizeMarqueeSelection(e.GetPosition(GraphContentGrid));
+            RefreshBlobInteractionOverlay();
+            if (TryGetBlobMouseToBitmapScale(out double mx, out double my))
+            {
+                Point p = e.GetPosition(GraphContentGrid);
+                BlobHitRegion? h = HitTestBlobsAtBitmapPoint(p.X * mx, p.Y * my);
+                GraphContentGrid.Cursor = h != null ? Cursors.Hand : Cursors.Arrow;
+            }
+            else
+                GraphContentGrid.Cursor = Cursors.Arrow;
+
+            e.Handled = true;
+            return;
+        }
+
         if (!_isDraggingBlob)
             return;
 
@@ -1384,7 +1507,7 @@ public partial class AnalysisPanel : UserControl
             _redoPitchEdits.RemoveAt(0);
 
         _hoveredBlob = null;
-        _selectedBlob = null;
+        ClearBlobSelection();
         ResetBlobDragPreviewState();
         RenderGraph(_points);
         RefreshBlobInteractionOverlay();
@@ -1403,7 +1526,7 @@ public partial class AnalysisPanel : UserControl
             _undoPitchEdits.RemoveAt(0);
 
         _hoveredBlob = null;
-        _selectedBlob = null;
+        ClearBlobSelection();
         ResetBlobDragPreviewState();
         RenderGraph(_points);
         RefreshBlobInteractionOverlay();
@@ -1412,7 +1535,7 @@ public partial class AnalysisPanel : UserControl
     private void TryReselectAfterBlobCommit(int targetMidi, float tStart, float tEnd)
     {
         _hoveredBlob = null;
-        _selectedBlob = null;
+        ClearBlobSelection();
 
         for (int i = _blobHitRegions.Count - 1; i >= 0; i--)
         {
@@ -1423,6 +1546,7 @@ public partial class AnalysisPanel : UserControl
                 continue;
             if (hi.Region.EndTime < tStart || hi.Region.StartTime > tEnd)
                 continue;
+            _selectedBlobs.Add(hi);
             _selectedBlob = hi;
             return;
         }
@@ -1474,28 +1598,55 @@ public partial class AnalysisPanel : UserControl
         double invSx = gw / _blobHitBitmapW;
         double invSy = gh / _blobHitBitmapH;
 
-        bool draggingSelection = _isDraggingBlob
-            && _dragBlob != null
-            && _selectedBlob != null
-            && ReferenceEquals(_dragBlob, _selectedBlob);
-        double dragOy = draggingSelection ? ComputeDragPreviewCanvasOffsetY(invSy) : 0;
-
-        if (ReferenceEquals(_hoveredBlob, _selectedBlob) && _selectedBlob != null)
-            DrawBlobOverlay(_selectedBlob, invSx, invSy, BlobOverlayKind.Combined, dragOy);
-        else
+        foreach (BlobHitRegion b in _selectedBlobs)
         {
-            if (_selectedBlob != null)
-                DrawBlobOverlay(_selectedBlob, invSx, invSy, BlobOverlayKind.Selected, dragOy);
-
-            if (_hoveredBlob != null)
-                DrawBlobOverlay(_hoveredBlob, invSx, invSy, BlobOverlayKind.Hover, 0);
+            double oy = _isDraggingBlob && ReferenceEquals(b, _dragBlob)
+                ? ComputeDragPreviewCanvasOffsetY(invSy)
+                : 0;
+            var kind = ReferenceEquals(b, _hoveredBlob) ? BlobOverlayKind.Combined : BlobOverlayKind.Selected;
+            DrawBlobOverlay(b, invSx, invSy, kind, oy);
         }
+
+        if (_hoveredBlob != null && !_selectedBlobs.Contains(_hoveredBlob))
+            DrawBlobOverlay(_hoveredBlob, invSx, invSy, BlobOverlayKind.Hover, 0);
+
+        if (_isMarqueeSelecting && _marqueeVisible)
+            DrawMarqueeSelectionOverlay();
 
         if (_isDraggingBlob && _dragBlob != null)
         {
             int targetMidi = Math.Clamp(_dragBlob.Region.Midi + _dragPreviewSemitoneOffset, 0, 127);
             DrawDragHud(_dragLastMouseUi, _dragPreviewSemitoneOffset, targetMidi);
         }
+    }
+
+    private void DrawMarqueeSelectionOverlay()
+    {
+        double l = Math.Min(_marqueeAnchorUi.X, _marqueeEndUi.X);
+        double t = Math.Min(_marqueeAnchorUi.Y, _marqueeEndUi.Y);
+        double rw = Math.Abs(_marqueeEndUi.X - _marqueeAnchorUi.X);
+        double rh = Math.Abs(_marqueeEndUi.Y - _marqueeAnchorUi.Y);
+
+        var fill = new SolidColorBrush(Color.FromArgb(0x22, 0x90, 0xB8, 0xF8));
+        var stroke = new SolidColorBrush(Color.FromArgb(0xCC, 0x78, 0xA8, 0xE8));
+        fill.Freeze();
+        stroke.Freeze();
+
+        var rect = new System.Windows.Shapes.Rectangle
+        {
+            Width = Math.Max(0, rw),
+            Height = Math.Max(0, rh),
+            Fill = fill,
+            Stroke = stroke,
+            StrokeThickness = 1,
+            StrokeDashArray = new DoubleCollection { 4, 3 },
+            IsHitTestVisible = false,
+            SnapsToDevicePixels = true,
+        };
+
+        Canvas.SetLeft(rect, l);
+        Canvas.SetTop(rect, t);
+        BlobInteractionCanvas.Children.Add(rect);
     }
 
     private void DrawDragHud(Point mouseUi, int semitoneOffset, int targetMidi)
