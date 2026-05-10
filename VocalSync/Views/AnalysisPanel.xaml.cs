@@ -266,6 +266,12 @@ public partial class AnalysisPanel : UserControl
     private readonly List<BlobHitRegion> _blobHitRegions = new();
     private int _blobHitBitmapW;
     private int _blobHitBitmapH;
+
+#pragma warning disable CS0414 // Read by blob hover/selection handlers when wired.
+    private BlobHitRegion? _hoveredBlob;
+    private BlobHitRegion? _selectedBlob;
+#pragma warning restore CS0414
+
     private bool _isRendering;
 
     /// <summary>Future-ready: hide original contour layer without removing data.</summary>
@@ -479,6 +485,8 @@ public partial class AnalysisPanel : UserControl
         _blobHitRegions.Clear();
         _blobHitBitmapW = 0;
         _blobHitBitmapH = 0;
+        _hoveredBlob = null;
+        _selectedBlob = null;
         GraphBlobOriginalImage.Source = null;
         GraphBlobCorrectedImage.Source = null;
         GraphBlobCorrectedImage.Visibility = Visibility.Collapsed;
@@ -680,6 +688,8 @@ public partial class AnalysisPanel : UserControl
             _blobHitRegions.Clear();
             _blobHitBitmapW = 0;
             _blobHitBitmapH = 0;
+            _hoveredBlob = null;
+            _selectedBlob = null;
             GraphBlobOriginalImage.Source = null;
             GraphBlobCorrectedImage.Source = null;
             GraphBlobCorrectedImage.Visibility = Visibility.Collapsed;
@@ -826,6 +836,8 @@ public partial class AnalysisPanel : UserControl
 
         // ── 5b. Note blobs (same Z-order as XAML: behind contour bitmaps) ─
         _blobHitRegions.Clear();
+        _hoveredBlob = null;
+        _selectedBlob = null;
         _blobHitBitmapW = w;
         _blobHitBitmapH = h;
 
