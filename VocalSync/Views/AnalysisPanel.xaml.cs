@@ -260,8 +260,11 @@ public partial class AnalysisPanel : UserControl
     private readonly WavPlaybackService _player = new();
 
     private string? _correctedPath;
-    /// <summary>Per-frame pitch after correction blend (same length as <see cref="_points"/>); null if no render yet.</summary>
+    /// <summary>Per-frame pitch for corrected contour/blobs (same length as <see cref="_points"/>); null if not loaded.</summary>
     private PitchPoint[]? _correctedContourPoints;
+
+    /// <summary>Mutable working copy for visual pitch edits; original <see cref="_points"/> stays immutable.</summary>
+    private PitchPoint[]? _correctedEditablePoints;
 
     /// <summary>Note-blob hit targets from the last graph render (bitmap pixel space; original entries then corrected).</summary>
     private readonly List<BlobHitRegion> _blobHitRegions = new();
@@ -483,6 +486,7 @@ public partial class AnalysisPanel : UserControl
 
         L(NextSeq(), $"_points {prevLen} -> 0 REASON:Clear {TC}");
         _points = [];
+        _correctedEditablePoints = null;
         _sourcePath = string.Empty;
         _renderTotalSeconds = 0f;
 
@@ -535,6 +539,9 @@ public partial class AnalysisPanel : UserControl
         L(NextSeq(), $"TOKEN {prevToken} -> {_graphRedrawToken} REASON:SetAnalysis {TC}");
 
         _points = points;
+        _correctedEditablePoints = ClonePitchPointArray(points);
+        _correctedContourPoints = _correctedEditablePoints;
+
         int voicedCount = points.Count(p => p.IsVoiced);
         PitchPoint? fv  = points.FirstOrDefault(p => p.IsVoiced);
         L(NextSeq(),
@@ -647,6 +654,7 @@ public partial class AnalysisPanel : UserControl
         _isRendering = false;
         _correctedPath = null;
         _correctedContourPoints = null;
+        _correctedEditablePoints = null;
         StopPlayheadTimerIfIdle();
         _player.Stop();
         PlayCorrectedButton.Content = "▶ Play Corrected";
@@ -784,8 +792,8 @@ public partial class AnalysisPanel : UserControl
             && _correctedContourPoints != null
             && _correctedContourPoints.Length == points.Length
             && points.Length > 0
-            && !string.IsNullOrEmpty(_correctedPath)
-            && File.Exists(_correctedPath);
+            && (ReferenceEquals(_correctedContourPoints, _correctedEditablePoints)
+                || (!string.IsNullOrEmpty(_correctedPath) && File.Exists(_correctedPath)));
 
         var pixels = new int[w * h];
         Array.Fill(pixels, ColBackground);
@@ -1201,6 +1209,12 @@ public partial class AnalysisPanel : UserControl
         if (!_isDraggingBlob)
             return;
 
+        bool commit = _dragBlob != null && _dragPreviewSemitoneOffset != 0;
+        int commitOffset = _dragPreviewSemitoneOffset;
+        float commitT0 = _dragBlob!.Region.StartTime;
+        float commitT1 = _dragBlob.Region.EndTime;
+        int commitRegionMidi = _dragBlob.Region.Midi;
+
         _isDraggingBlob = false;
         _dragBlob = null;
         _dragPreviewSemitoneOffset = 0;
@@ -1208,6 +1222,15 @@ public partial class AnalysisPanel : UserControl
             GraphContentGrid.ReleaseMouseCapture();
 
         RefreshBlobInteractionOverlay();
+
+        if (commit && _correctedEditablePoints != null && _correctedEditablePoints.Length > 0)
+        {
+            CommitBlobSemitoneEdit(commitRegionMidi, commitT0, commitT1, commitOffset);
+            RenderGraph(_points);
+            int targetMidi = Math.Clamp(commitRegionMidi + commitOffset, MidiAbsMin, MidiAbsMax);
+            TryReselectAfterBlobCommit(targetMidi, commitT0, commitT1);
+            RefreshBlobInteractionOverlay();
+        }
 
         if (TryGetBlobMouseToBitmapScale(out double sx, out double sy))
         {
@@ -1220,6 +1243,67 @@ public partial class AnalysisPanel : UserControl
 
         e.Handled = true;
     }
+
+    private void CommitBlobSemitoneEdit(int regionMidi, float tStart, float tEnd, int semitoneOffset)
+    {
+        if (_correctedEditablePoints == null)
+            return;
+
+        Debug.WriteLine($"[CommitEdit] note={regionMidi} offset={semitoneOffset}");
+
+        for (int i = 0; i < _correctedEditablePoints.Length; i++)
+        {
+            PitchPoint p = _correctedEditablePoints[i];
+            if (!p.IsVoiced)
+                continue;
+            if (p.MidiNote != regionMidi)
+                continue;
+            if (p.TimeSeconds < tStart || p.TimeSeconds > tEnd)
+                continue;
+
+            int newMidi = Math.Clamp(p.MidiNote + semitoneOffset, MidiAbsMin, MidiAbsMax);
+            float hz = MidiToHzProcessor(newMidi);
+            _correctedEditablePoints[i] = BuildPitchPointFromFrequency(p.TimeSeconds, hz, p.Confidence);
+        }
+    }
+
+    private void TryReselectAfterBlobCommit(int targetMidi, float tStart, float tEnd)
+    {
+        _hoveredBlob = null;
+        _selectedBlob = null;
+
+        for (int i = _blobHitRegions.Count - 1; i >= 0; i--)
+        {
+            BlobHitRegion hi = _blobHitRegions[i];
+            if (!hi.Corrected)
+                continue;
+            if (hi.Region.Midi != targetMidi)
+                continue;
+            if (hi.Region.EndTime < tStart || hi.Region.StartTime > tEnd)
+                continue;
+            _selectedBlob = hi;
+            return;
+        }
+    }
+
+    private static PitchPoint[] ClonePitchPointArray(PitchPoint[] source)
+    {
+        var copy = new PitchPoint[source.Length];
+        for (int i = 0; i < source.Length; i++)
+            copy[i] = ClonePitchPoint(source[i]);
+        return copy;
+    }
+
+    private static PitchPoint ClonePitchPoint(PitchPoint p)
+        => new()
+        {
+            TimeSeconds = p.TimeSeconds,
+            FrequencyHz = p.FrequencyHz,
+            NoteName = p.NoteName,
+            MidiNote = p.MidiNote,
+            CentsOffset = p.CentsOffset,
+            Confidence = p.Confidence,
+        };
 
     private double ComputeDragPreviewCanvasOffsetY(double invSy)
     {
@@ -1896,7 +1980,8 @@ public partial class AnalysisPanel : UserControl
         if (outPath != null)
         {
             _correctedPath = outPath;
-            _correctedContourPoints = BuildCorrectedVisualPitchTimeline(strength);
+            _correctedEditablePoints = BuildCorrectedVisualPitchTimeline(strength);
+            _correctedContourPoints = _correctedEditablePoints;
             RenderProgress.Visibility = Visibility.Collapsed;
             CorrectionStatus.Text = $"Saved: {Path.GetFileName(outPath)}";
             PlayCorrectedButton.IsEnabled = true;
