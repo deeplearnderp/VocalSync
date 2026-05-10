@@ -244,6 +244,25 @@ public partial class AnalysisPanel : UserControl
         public bool Corrected;
     }
 
+    /// <summary>
+    /// One committed pitch edit: only affected frame indices and their before/after <see cref="PitchPoint"/> values.
+    /// </summary>
+    private sealed class PitchEditAction
+    {
+        public PitchEditAction(int[] indices, PitchPoint[] before, PitchPoint[] after)
+        {
+            if (indices.Length != before.Length || indices.Length != after.Length)
+                throw new ArgumentException("PitchEditAction array lengths must match.");
+            Indices = indices;
+            Before = before;
+            After = after;
+        }
+
+        public int[] Indices { get; }
+        public PitchPoint[] Before { get; }
+        public PitchPoint[] After { get; }
+    }
+
     // ── Render palette ────────────────────────────────────────────────────
     private static readonly int ColBackground   = Bgra(0x11, 0x11, 0x11);
     private static readonly int ColBandShade    = Bgra(0x14, 0x14, 0x16); // alternating octave band
@@ -265,6 +284,10 @@ public partial class AnalysisPanel : UserControl
 
     /// <summary>Mutable working copy for visual pitch edits; original <see cref="_points"/> stays immutable.</summary>
     private PitchPoint[]? _correctedEditablePoints;
+
+    private readonly List<PitchEditAction> _undoPitchEdits = new();
+    private readonly List<PitchEditAction> _redoPitchEdits = new();
+    private const int MaxPitchEditHistory = 64;
 
     /// <summary>Note-blob hit targets from the last graph render (bitmap pixel space; original entries then corrected).</summary>
     private readonly List<BlobHitRegion> _blobHitRegions = new();
@@ -663,6 +686,7 @@ public partial class AnalysisPanel : UserControl
         RenderProgress.Value = 0;
         RenderButton.IsEnabled = true;
         CorrectionToggle.IsChecked = false;
+        ClearPitchEditHistory();
     }
 
     private void PopulateHeader(PitchPoint[] points, string filePath)
@@ -1179,6 +1203,8 @@ public partial class AnalysisPanel : UserControl
         if (!TryGetBlobMouseToBitmapScale(out double scaleX, out double scaleY))
             return;
 
+        Keyboard.Focus(GraphContentGrid);
+
         Point pos = e.GetPosition(GraphContentGrid);
         double bx = pos.X * scaleX;
         double by = pos.Y * scaleY;
@@ -1249,7 +1275,8 @@ public partial class AnalysisPanel : UserControl
         if (_correctedEditablePoints == null)
             return;
 
-        Debug.WriteLine($"[CommitEdit] note={regionMidi} offset={semitoneOffset}");
+        var indices = new List<int>();
+        var before = new List<PitchPoint>();
 
         for (int i = 0; i < _correctedEditablePoints.Length; i++)
         {
@@ -1261,10 +1288,125 @@ public partial class AnalysisPanel : UserControl
             if (p.TimeSeconds < tStart || p.TimeSeconds > tEnd)
                 continue;
 
+            indices.Add(i);
+            before.Add(ClonePitchPoint(p));
+        }
+
+        if (indices.Count == 0)
+        {
+            Debug.WriteLine($"[CommitEdit] note={regionMidi} offset={semitoneOffset} (no frames)");
+            return;
+        }
+
+        var after = new List<PitchPoint>(indices.Count);
+        foreach (int i in indices)
+        {
+            PitchPoint p = _correctedEditablePoints[i];
             int newMidi = Math.Clamp(p.MidiNote + semitoneOffset, MidiAbsMin, MidiAbsMax);
             float hz = MidiToHzProcessor(newMidi);
-            _correctedEditablePoints[i] = BuildPitchPointFromFrequency(p.TimeSeconds, hz, p.Confidence);
+            after.Add(BuildPitchPointFromFrequency(p.TimeSeconds, hz, p.Confidence));
         }
+
+        for (int k = 0; k < indices.Count; k++)
+            _correctedEditablePoints[indices[k]] = after[k];
+
+        Debug.WriteLine($"[CommitEdit] note={regionMidi} offset={semitoneOffset} frames={indices.Count}");
+
+        PushPitchEditAction(new PitchEditAction(indices.ToArray(), before.ToArray(), after.ToArray()));
+    }
+
+    private void ClearPitchEditHistory()
+    {
+        _undoPitchEdits.Clear();
+        _redoPitchEdits.Clear();
+    }
+
+    private void PushPitchEditAction(PitchEditAction action)
+    {
+        _redoPitchEdits.Clear();
+        _undoPitchEdits.Add(action);
+        while (_undoPitchEdits.Count > MaxPitchEditHistory)
+            _undoPitchEdits.RemoveAt(0);
+    }
+
+    private static void ApplyPitchEditAction(PitchPoint[]? timeline, PitchEditAction action, bool useAfter)
+    {
+        if (timeline == null)
+            return;
+        for (int k = 0; k < action.Indices.Length; k++)
+        {
+            int ix = action.Indices[k];
+            timeline[ix] = useAfter ? action.After[k] : action.Before[k];
+        }
+    }
+
+    private void GraphContentGrid_PreviewKeyDown(object sender, KeyEventArgs e)
+    {
+        ModifierKeys mods = Keyboard.Modifiers;
+        if ((mods & ModifierKeys.Control) == 0)
+            return;
+
+        bool shift = (mods & ModifierKeys.Shift) != 0;
+
+        if (e.Key == Key.Z && !shift)
+        {
+            if (_undoPitchEdits.Count == 0)
+                return;
+            UndoPitchEdit();
+            e.Handled = true;
+        }
+        else if (e.Key == Key.Y && !shift)
+        {
+            if (_redoPitchEdits.Count == 0)
+                return;
+            RedoPitchEdit();
+            e.Handled = true;
+        }
+        else if (e.Key == Key.Z && shift)
+        {
+            if (_redoPitchEdits.Count == 0)
+                return;
+            RedoPitchEdit();
+            e.Handled = true;
+        }
+    }
+
+    private void UndoPitchEdit()
+    {
+        if (_undoPitchEdits.Count == 0 || _correctedEditablePoints == null)
+            return;
+
+        PitchEditAction action = _undoPitchEdits[^1];
+        _undoPitchEdits.RemoveAt(_undoPitchEdits.Count - 1);
+        ApplyPitchEditAction(_correctedEditablePoints, action, useAfter: false);
+        _redoPitchEdits.Add(action);
+        while (_redoPitchEdits.Count > MaxPitchEditHistory)
+            _redoPitchEdits.RemoveAt(0);
+
+        _hoveredBlob = null;
+        _selectedBlob = null;
+        ResetBlobDragPreviewState();
+        RenderGraph(_points);
+        RefreshBlobInteractionOverlay();
+    }
+
+    private void RedoPitchEdit()
+    {
+        if (_redoPitchEdits.Count == 0 || _correctedEditablePoints == null)
+            return;
+
+        PitchEditAction action = _redoPitchEdits[^1];
+        _redoPitchEdits.RemoveAt(_redoPitchEdits.Count - 1);
+        ApplyPitchEditAction(_correctedEditablePoints, action, useAfter: true);
+        _undoPitchEdits.Add(action);
+        while (_undoPitchEdits.Count > MaxPitchEditHistory)
+            _undoPitchEdits.RemoveAt(0);
+
+        _hoveredBlob = null;
+        _selectedBlob = null;
+        ResetBlobDragPreviewState();
+        RenderGraph(_points);
+        RefreshBlobInteractionOverlay();
     }
 
     private void TryReselectAfterBlobCommit(int targetMidi, float tStart, float tEnd)
@@ -1982,6 +2124,7 @@ public partial class AnalysisPanel : UserControl
             _correctedPath = outPath;
             _correctedEditablePoints = BuildCorrectedVisualPitchTimeline(strength);
             _correctedContourPoints = _correctedEditablePoints;
+            ClearPitchEditHistory();
             RenderProgress.Visibility = Visibility.Collapsed;
             CorrectionStatus.Text = $"Saved: {Path.GetFileName(outPath)}";
             PlayCorrectedButton.IsEnabled = true;

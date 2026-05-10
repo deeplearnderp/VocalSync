@@ -274,10 +274,12 @@
                         <!-- Graph stack: bg → blobs → contours → blob interaction → labels → playhead -->
                         <Grid x:Name="GraphContentGrid"
                               Background="Transparent"
+                              Focusable="True"
                               MouseMove="GraphContentGrid_MouseMove"
                               MouseLeave="GraphContentGrid_MouseLeave"
                               MouseLeftButtonDown="GraphContentGrid_MouseLeftButtonDown"
-                              MouseLeftButtonUp="GraphContentGrid_MouseLeftButtonUp">
+                              MouseLeftButtonUp="GraphContentGrid_MouseLeftButtonUp"
+                              PreviewKeyDown="GraphContentGrid_PreviewKeyDown">
                             <Image x:Name="GraphImage"
                                    Stretch="Fill"
                                    HorizontalAlignment="Stretch"
