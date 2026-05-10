@@ -276,7 +276,8 @@
                               Background="Transparent"
                               MouseMove="GraphContentGrid_MouseMove"
                               MouseLeave="GraphContentGrid_MouseLeave"
-                              MouseLeftButtonDown="GraphContentGrid_MouseLeftButtonDown">
+                              MouseLeftButtonDown="GraphContentGrid_MouseLeftButtonDown"
+                              MouseLeftButtonUp="GraphContentGrid_MouseLeftButtonUp">
                             <Image x:Name="GraphImage"
                                    Stretch="Fill"
                                    HorizontalAlignment="Stretch"

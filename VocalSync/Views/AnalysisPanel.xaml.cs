@@ -272,12 +272,12 @@ public partial class AnalysisPanel : UserControl
     private BlobHitRegion? _selectedBlob;
 
     /// <summary>Drag-preview only — no analysis mutation.</summary>
-#pragma warning disable CS0414 // Set by drag-preview mouse handlers in a later phase.
     private bool _isDraggingBlob;
     private BlobHitRegion? _dragBlob;
     private Point _dragStartMouseUi;
     private int _dragPreviewSemitoneOffset;
-#pragma warning restore CS0414
+
+    private const double DragSemitoneReferencePixels = 20.0;
 
     private bool _isRendering;
 
@@ -1103,6 +1103,8 @@ public partial class AnalysisPanel : UserControl
 
     private void ResetBlobDragPreviewState()
     {
+        if (GraphContentGrid.IsMouseCaptured)
+            GraphContentGrid.ReleaseMouseCapture();
         _isDraggingBlob = false;
         _dragBlob = null;
         _dragStartMouseUi = default;
@@ -1111,15 +1113,32 @@ public partial class AnalysisPanel : UserControl
 
     private void GraphContentGrid_MouseMove(object sender, MouseEventArgs e)
     {
+        if (_isDraggingBlob && _dragBlob != null)
+        {
+            Point pos = e.GetPosition(GraphContentGrid);
+            double deltaY = pos.Y - _dragStartMouseUi.Y;
+            int rawSemitone = (int)Math.Round(-deltaY / DragSemitoneReferencePixels);
+            int m = _dragBlob.Region.Midi;
+            int snapped = Math.Clamp(rawSemitone, MidiAbsMin - m, MidiAbsMax - m);
+            if (snapped != _dragPreviewSemitoneOffset)
+            {
+                _dragPreviewSemitoneOffset = snapped;
+                RefreshBlobInteractionOverlay();
+            }
+
+            GraphContentGrid.Cursor = Cursors.SizeNS;
+            return;
+        }
+
         if (!TryGetBlobMouseToBitmapScale(out double scaleX, out double scaleY))
         {
             GraphContentGrid.Cursor = Cursors.Arrow;
             return;
         }
 
-        Point pos = e.GetPosition(GraphContentGrid);
-        double bx = pos.X * scaleX;
-        double by = pos.Y * scaleY;
+        Point pos2 = e.GetPosition(GraphContentGrid);
+        double bx = pos2.X * scaleX;
+        double by = pos2.Y * scaleY;
         BlobHitRegion? hit = HitTestBlobsAtBitmapPoint(bx, by);
 
         GraphContentGrid.Cursor = hit != null ? Cursors.Hand : Cursors.Arrow;
@@ -1134,6 +1153,9 @@ public partial class AnalysisPanel : UserControl
 
     private void GraphContentGrid_MouseLeave(object sender, MouseEventArgs e)
     {
+        if (_isDraggingBlob)
+            return;
+
         bool hadHover = _hoveredBlob != null;
         _hoveredBlob = null;
         GraphContentGrid.Cursor = Cursors.Arrow;
@@ -1151,10 +1173,64 @@ public partial class AnalysisPanel : UserControl
         double bx = pos.X * scaleX;
         double by = pos.Y * scaleY;
         BlobHitRegion? hit = HitTestBlobsAtBitmapPoint(bx, by);
+
+        if (hit == null)
+        {
+            _selectedBlob = null;
+            RefreshBlobInteractionOverlay();
+            return;
+        }
+
+        _hoveredBlob = hit;
         _selectedBlob = hit;
+        _dragBlob = hit;
+        _isDraggingBlob = true;
+        _dragStartMouseUi = pos;
+        _dragPreviewSemitoneOffset = 0;
+        GraphContentGrid.ToolTip = null;
+        GraphContentGrid.CaptureMouse();
         RefreshBlobInteractionOverlay();
-        if (hit != null)
-            e.Handled = true;
+        e.Handled = true;
+    }
+
+    private void GraphContentGrid_MouseLeftButtonUp(object sender, MouseButtonEventArgs e)
+    {
+        if (!_isDraggingBlob)
+            return;
+
+        _isDraggingBlob = false;
+        _dragBlob = null;
+        _dragPreviewSemitoneOffset = 0;
+        if (GraphContentGrid.IsMouseCaptured)
+            GraphContentGrid.ReleaseMouseCapture();
+
+        RefreshBlobInteractionOverlay();
+
+        if (TryGetBlobMouseToBitmapScale(out double sx, out double sy))
+        {
+            Point p = e.GetPosition(GraphContentGrid);
+            BlobHitRegion? h = HitTestBlobsAtBitmapPoint(p.X * sx, p.Y * sy);
+            GraphContentGrid.Cursor = h != null ? Cursors.Hand : Cursors.Arrow;
+        }
+        else
+            GraphContentGrid.Cursor = Cursors.Arrow;
+
+        e.Handled = true;
+    }
+
+    private double ComputeDragPreviewCanvasOffsetY(double invSy)
+    {
+        if (!_isDraggingBlob || _dragBlob == null || _dragPreviewSemitoneOffset == 0)
+            return 0;
+
+        int h = _blobHitBitmapH;
+        int m = _dragBlob.Region.Midi;
+        int y0 = MidiToY(m, h, _renderMidiMin, _renderMidiMax);
+        int y1 = m < _renderMidiMax
+            ? MidiToY(m + 1, h, _renderMidiMin, _renderMidiMax)
+            : MidiToY(m - 1, h, _renderMidiMin, _renderMidiMax);
+        double semitonePx = Math.Max(2.0, Math.Abs(y0 - y1));
+        return -_dragPreviewSemitoneOffset * semitonePx * invSy;
     }
 
     private void RefreshBlobInteractionOverlay()
@@ -1169,17 +1245,23 @@ public partial class AnalysisPanel : UserControl
         double invSx = gw / _blobHitBitmapW;
         double invSy = gh / _blobHitBitmapH;
 
+        bool draggingSelection = _isDraggingBlob
+            && _dragBlob != null
+            && _selectedBlob != null
+            && ReferenceEquals(_dragBlob, _selectedBlob);
+        double dragOy = draggingSelection ? ComputeDragPreviewCanvasOffsetY(invSy) : 0;
+
         if (ReferenceEquals(_hoveredBlob, _selectedBlob) && _selectedBlob != null)
         {
-            DrawBlobOverlay(_selectedBlob, invSx, invSy, BlobOverlayKind.Combined);
+            DrawBlobOverlay(_selectedBlob, invSx, invSy, BlobOverlayKind.Combined, dragOy);
             return;
         }
 
         if (_selectedBlob != null)
-            DrawBlobOverlay(_selectedBlob, invSx, invSy, BlobOverlayKind.Selected);
+            DrawBlobOverlay(_selectedBlob, invSx, invSy, BlobOverlayKind.Selected, dragOy);
 
         if (_hoveredBlob != null)
-            DrawBlobOverlay(_hoveredBlob, invSx, invSy, BlobOverlayKind.Hover);
+            DrawBlobOverlay(_hoveredBlob, invSx, invSy, BlobOverlayKind.Hover, 0);
     }
 
     private enum BlobOverlayKind
@@ -1190,13 +1272,14 @@ public partial class AnalysisPanel : UserControl
     }
 
     /// <summary>Rounded hover / selection / combined chrome on <see cref="BlobInteractionCanvas"/>.</summary>
-    private void DrawBlobOverlay(BlobHitRegion hit, double invSx, double invSy, BlobOverlayKind kind)
+    /// <param name="canvasOffsetY">Vertical shift in graph pixels (drag preview).</param>
+    private void DrawBlobOverlay(BlobHitRegion hit, double invSx, double invSy, BlobOverlayKind kind, double canvasOffsetY = 0)
     {
         GetBlobLayoutPixels(hit.Region, _blobHitBitmapW, _blobHitBitmapH, _renderMidiMin, _renderMidiMax,
             _renderTotalSeconds, out int px0, out int px1, out int yTop, out int yBot, out int radiusPx);
 
         double left = px0 * invSx;
-        double top = yTop * invSy;
+        double top = yTop * invSy + canvasOffsetY;
         double rw = (px1 - px0 + 1) * invSx;
         double rh = (yBot - yTop + 1) * invSy;
         rw = Math.Max(0, rw);
