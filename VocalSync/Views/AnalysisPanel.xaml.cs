@@ -489,6 +489,8 @@ public partial class AnalysisPanel : UserControl
         _hoveredBlob = null;
         _selectedBlob = null;
         BlobInteractionCanvas.Children.Clear();
+        GraphContentGrid.ToolTip = null;
+        GraphContentGrid.Cursor = Cursors.Arrow;
         GraphBlobOriginalImage.Source = null;
         GraphBlobCorrectedImage.Source = null;
         GraphBlobCorrectedImage.Visibility = Visibility.Collapsed;
@@ -693,6 +695,8 @@ public partial class AnalysisPanel : UserControl
             _hoveredBlob = null;
             _selectedBlob = null;
             BlobInteractionCanvas.Children.Clear();
+            GraphContentGrid.ToolTip = null;
+            GraphContentGrid.Cursor = Cursors.Arrow;
             GraphBlobOriginalImage.Source = null;
             GraphBlobCorrectedImage.Source = null;
             GraphBlobCorrectedImage.Visibility = Visibility.Collapsed;
@@ -1089,25 +1093,34 @@ public partial class AnalysisPanel : UserControl
     private void GraphContentGrid_MouseMove(object sender, MouseEventArgs e)
     {
         if (!TryGetBlobMouseToBitmapScale(out double scaleX, out double scaleY))
+        {
+            GraphContentGrid.Cursor = Cursors.Arrow;
             return;
+        }
 
         Point pos = e.GetPosition(GraphContentGrid);
         double bx = pos.X * scaleX;
         double by = pos.Y * scaleY;
         BlobHitRegion? hit = HitTestBlobsAtBitmapPoint(bx, by);
+
+        GraphContentGrid.Cursor = hit != null ? Cursors.Hand : Cursors.Arrow;
+
         if (!ReferenceEquals(hit, _hoveredBlob))
         {
             _hoveredBlob = hit;
+            GraphContentGrid.ToolTip = hit != null ? BuildBlobTooltip(hit) : null;
             RefreshBlobInteractionOverlay();
         }
     }
 
     private void GraphContentGrid_MouseLeave(object sender, MouseEventArgs e)
     {
-        if (_hoveredBlob == null)
-            return;
+        bool hadHover = _hoveredBlob != null;
         _hoveredBlob = null;
-        RefreshBlobInteractionOverlay();
+        GraphContentGrid.Cursor = Cursors.Arrow;
+        GraphContentGrid.ToolTip = null;
+        if (hadHover)
+            RefreshBlobInteractionOverlay();
     }
 
     private void GraphContentGrid_MouseLeftButtonDown(object sender, MouseButtonEventArgs e)
@@ -1137,29 +1150,141 @@ public partial class AnalysisPanel : UserControl
         double invSx = gw / _blobHitBitmapW;
         double invSy = gh / _blobHitBitmapH;
 
-        void AddOutline(BlobHitRegion hit, Brush stroke, double thickness)
+        if (ReferenceEquals(_hoveredBlob, _selectedBlob) && _selectedBlob != null)
         {
-            Rect b = hit.Bounds;
-            var rect = new System.Windows.Shapes.Rectangle
-            {
-                Width = b.Width * invSx,
-                Height = b.Height * invSy,
-                Stroke = stroke,
-                StrokeThickness = thickness,
-                Fill = Brushes.Transparent,
-                IsHitTestVisible = false,
-                SnapsToDevicePixels = true,
-            };
-            Canvas.SetLeft(rect, b.X * invSx);
-            Canvas.SetTop(rect, b.Y * invSy);
-            BlobInteractionCanvas.Children.Add(rect);
+            DrawBlobOverlay(_selectedBlob, invSx, invSy, BlobOverlayKind.Combined);
+            return;
         }
 
-        if (_hoveredBlob is { } hv && !ReferenceEquals(hv, _selectedBlob))
-            AddOutline(hv, new SolidColorBrush(Color.FromArgb(0xCC, 0xC8, 0xD8, 0xF0)), 1.25);
+        if (_selectedBlob != null)
+            DrawBlobOverlay(_selectedBlob, invSx, invSy, BlobOverlayKind.Selected);
 
-        if (_selectedBlob is { } sel)
-            AddOutline(sel, Brushes.White, 2.0);
+        if (_hoveredBlob != null)
+            DrawBlobOverlay(_hoveredBlob, invSx, invSy, BlobOverlayKind.Hover);
+    }
+
+    private enum BlobOverlayKind
+    {
+        Hover,
+        Selected,
+        Combined,
+    }
+
+    /// <summary>Rounded hover / selection / combined chrome on <see cref="BlobInteractionCanvas"/>.</summary>
+    private void DrawBlobOverlay(BlobHitRegion hit, double invSx, double invSy, BlobOverlayKind kind)
+    {
+        GetBlobLayoutPixels(hit.Region, _blobHitBitmapW, _blobHitBitmapH, _renderMidiMin, _renderMidiMax,
+            _renderTotalSeconds, out int px0, out int px1, out int yTop, out int yBot, out int radiusPx);
+
+        double left = px0 * invSx;
+        double top = yTop * invSy;
+        double rw = (px1 - px0 + 1) * invSx;
+        double rh = (yBot - yTop + 1) * invSy;
+        rw = Math.Max(0, rw);
+        rh = Math.Max(0, rh);
+
+        double radiusX = Math.Min(radiusPx * invSx, rw / 2.0);
+        double radiusY = Math.Min(radiusPx * invSy, rh / 2.0);
+
+        bool corrected = hit.Corrected;
+        Color fill;
+        Color stroke;
+        double strokeTh;
+        switch (kind)
+        {
+            case BlobOverlayKind.Hover:
+                strokeTh = 1.0;
+                if (corrected)
+                {
+                    fill = Color.FromArgb(0x1E, 0x48, 0xA8, 0xE0);
+                    stroke = Color.FromArgb(0x9A, 0x98, 0xC8, 0xEE);
+                }
+                else
+                {
+                    fill = Color.FromArgb(0x1E, 0x68, 0xB8, 0x90);
+                    stroke = Color.FromArgb(0x9A, 0xA8, 0xD4, 0xC0);
+                }
+                break;
+            case BlobOverlayKind.Selected:
+                strokeTh = 2.35;
+                if (corrected)
+                {
+                    fill = Color.FromArgb(0x42, 0x50, 0xB8, 0xF0);
+                    stroke = Color.FromArgb(0xF0, 0xD8, 0xF0, 0xFF);
+                }
+                else
+                {
+                    fill = Color.FromArgb(0x42, 0x78, 0xD8, 0xB0);
+                    stroke = Color.FromArgb(0xF0, 0xE8, 0xFA, 0xF2);
+                }
+                break;
+            default: // Combined — single merged state when hover target is selection
+                strokeTh = 2.55;
+                if (corrected)
+                {
+                    fill = Color.FromArgb(0x52, 0x58, 0xC8, 0xF8);
+                    stroke = Color.FromArgb(0xFF, 0xEC, 0xF6, 0xFF);
+                }
+                else
+                {
+                    fill = Color.FromArgb(0x52, 0x88, 0xE8, 0xC0);
+                    stroke = Color.FromArgb(0xFF, 0xF4, 0xFD, 0xF6);
+                }
+                break;
+        }
+
+        var fillBrush = new SolidColorBrush(fill);
+        var strokeBrush = new SolidColorBrush(stroke);
+        fillBrush.Freeze();
+        strokeBrush.Freeze();
+
+        var rect = new System.Windows.Shapes.Rectangle
+        {
+            Width = rw,
+            Height = rh,
+            RadiusX = radiusX,
+            RadiusY = radiusY,
+            Fill = fillBrush,
+            Stroke = strokeBrush,
+            StrokeThickness = strokeTh,
+            StrokeLineJoin = PenLineJoin.Round,
+            IsHitTestVisible = false,
+            SnapsToDevicePixels = true,
+        };
+        Canvas.SetLeft(rect, left);
+        Canvas.SetTop(rect, top);
+        BlobInteractionCanvas.Children.Add(rect);
+    }
+
+    private static object BuildBlobTooltip(BlobHitRegion hit)
+    {
+        NoteRegion r = hit.Region;
+        string name = FormatNoteNameFromMidi(r.Midi);
+        double dur = Math.Max(0, r.EndTime - r.StartTime);
+        int pct = (int)Math.Round(Math.Clamp(r.AverageConfidence, 0f, 1f) * 100f);
+
+        var lines = new List<string> { name, $"Duration: {dur:F2}s", $"Confidence: {pct}%" };
+        if (hit.Corrected)
+            lines.Add("Corrected");
+
+        var tb = new TextBlock
+        {
+            FontFamily = new FontFamily("Segoe UI"),
+            FontSize = 10,
+            LineHeight = 14,
+            Foreground = new SolidColorBrush(Color.FromRgb(0xE4, 0xE6, 0xEA)),
+            Text = string.Join(Environment.NewLine, lines),
+        };
+        ((SolidColorBrush)tb.Foreground).Freeze();
+        return tb;
+    }
+
+    private static string FormatNoteNameFromMidi(int midi)
+    {
+        midi = Math.Clamp(midi, 0, 127);
+        int octave = (midi / 12) - 1;
+        string[] names = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"];
+        return $"{names[midi % 12]}{octave}";
     }
 
     private static int BlobDistSq(int ax, int ay, int bx, int by)
