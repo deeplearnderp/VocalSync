@@ -272,11 +272,16 @@
                             CornerRadius="4"
                             ClipToBounds="True">
                         <!-- Graph stack: bg → blobs → contours → blob interaction → labels → playhead -->
-                        <Grid x:Name="GraphContentGrid">
+                        <Grid x:Name="GraphContentGrid"
+                              Background="Transparent"
+                              MouseMove="GraphContentGrid_MouseMove"
+                              MouseLeave="GraphContentGrid_MouseLeave"
+                              MouseLeftButtonDown="GraphContentGrid_MouseLeftButtonDown">
                             <Image x:Name="GraphImage"
                                    Stretch="Fill"
                                    HorizontalAlignment="Stretch"
                                    VerticalAlignment="Stretch"
+                                   IsHitTestVisible="False"
                                    RenderOptions.BitmapScalingMode="NearestNeighbor"/>
                             <Image x:Name="GraphBlobOriginalImage"
                                    Stretch="Fill"

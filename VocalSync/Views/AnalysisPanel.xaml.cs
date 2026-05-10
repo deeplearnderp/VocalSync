@@ -2,6 +2,7 @@ using System.Diagnostics;
 using System.IO;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
 using System.Windows.Threading;
@@ -267,10 +268,8 @@ public partial class AnalysisPanel : UserControl
     private int _blobHitBitmapW;
     private int _blobHitBitmapH;
 
-#pragma warning disable CS0414 // Read by blob hover/selection handlers when wired.
     private BlobHitRegion? _hoveredBlob;
     private BlobHitRegion? _selectedBlob;
-#pragma warning restore CS0414
 
     private bool _isRendering;
 
@@ -353,6 +352,8 @@ public partial class AnalysisPanel : UserControl
 
         // Refresh note-label overlay on resize (canvas height changes with splitter)
         NoteLabelsCanvas.SizeChanged += (_, _) => DrawNoteLabels(_renderMidiMin, _renderMidiMax);
+
+        GraphContentGrid.SizeChanged += (_, _) => RefreshBlobInteractionOverlay();
 
         // ── LAYOUT DIAGNOSTICS ────────────────────────────────────────────
 
@@ -487,6 +488,7 @@ public partial class AnalysisPanel : UserControl
         _blobHitBitmapH = 0;
         _hoveredBlob = null;
         _selectedBlob = null;
+        BlobInteractionCanvas.Children.Clear();
         GraphBlobOriginalImage.Source = null;
         GraphBlobCorrectedImage.Source = null;
         GraphBlobCorrectedImage.Visibility = Visibility.Collapsed;
@@ -690,6 +692,7 @@ public partial class AnalysisPanel : UserControl
             _blobHitBitmapH = 0;
             _hoveredBlob = null;
             _selectedBlob = null;
+            BlobInteractionCanvas.Children.Clear();
             GraphBlobOriginalImage.Source = null;
             GraphBlobCorrectedImage.Source = null;
             GraphBlobCorrectedImage.Visibility = Visibility.Collapsed;
@@ -925,6 +928,7 @@ public partial class AnalysisPanel : UserControl
         // ── 7. Overlays ───────────────────────────────────────────────────
         DrawNoteLabels(midiMin, midiMax);
         DrawTimeline();
+        RefreshBlobInteractionOverlay();
 
         L(NextSeq(), $"RenderGraph() EXIT-SUCCESS bitmap={w}×{h} token={_graphRedrawToken} {TC}");
     }
@@ -1046,6 +1050,116 @@ public partial class AnalysisPanel : UserControl
                 Corrected = corrected,
             });
         }
+    }
+
+    /// <summary>
+    /// Maps graph grid coordinates to blob bitmap pixels (same basis as <see cref="_blobHitRegions"/>).
+    /// </summary>
+    private bool TryGetBlobMouseToBitmapScale(out double scaleX, out double scaleY)
+    {
+        double gw = GraphContentGrid.ActualWidth;
+        double gh = GraphContentGrid.ActualHeight;
+        if (_blobHitBitmapW <= 0 || _blobHitBitmapH <= 0 || gw <= 0 || gh <= 0)
+        {
+            scaleX = 0;
+            scaleY = 0;
+            return false;
+        }
+
+        scaleX = _blobHitBitmapW / gw;
+        scaleY = _blobHitBitmapH / gh;
+        return true;
+    }
+
+    private BlobHitRegion? HitTestBlobsAtBitmapPoint(double bx, double by)
+    {
+        if (_blobHitRegions.Count == 0)
+            return null;
+
+        var p = new Point(bx, by);
+        for (int i = _blobHitRegions.Count - 1; i >= 0; i--)
+        {
+            if (_blobHitRegions[i].Bounds.Contains(p))
+                return _blobHitRegions[i];
+        }
+
+        return null;
+    }
+
+    private void GraphContentGrid_MouseMove(object sender, MouseEventArgs e)
+    {
+        if (!TryGetBlobMouseToBitmapScale(out double scaleX, out double scaleY))
+            return;
+
+        Point pos = e.GetPosition(GraphContentGrid);
+        double bx = pos.X * scaleX;
+        double by = pos.Y * scaleY;
+        BlobHitRegion? hit = HitTestBlobsAtBitmapPoint(bx, by);
+        if (!ReferenceEquals(hit, _hoveredBlob))
+        {
+            _hoveredBlob = hit;
+            RefreshBlobInteractionOverlay();
+        }
+    }
+
+    private void GraphContentGrid_MouseLeave(object sender, MouseEventArgs e)
+    {
+        if (_hoveredBlob == null)
+            return;
+        _hoveredBlob = null;
+        RefreshBlobInteractionOverlay();
+    }
+
+    private void GraphContentGrid_MouseLeftButtonDown(object sender, MouseButtonEventArgs e)
+    {
+        if (!TryGetBlobMouseToBitmapScale(out double scaleX, out double scaleY))
+            return;
+
+        Point pos = e.GetPosition(GraphContentGrid);
+        double bx = pos.X * scaleX;
+        double by = pos.Y * scaleY;
+        BlobHitRegion? hit = HitTestBlobsAtBitmapPoint(bx, by);
+        _selectedBlob = hit;
+        RefreshBlobInteractionOverlay();
+        if (hit != null)
+            e.Handled = true;
+    }
+
+    private void RefreshBlobInteractionOverlay()
+    {
+        BlobInteractionCanvas.Children.Clear();
+
+        double gw = GraphContentGrid.ActualWidth;
+        double gh = GraphContentGrid.ActualHeight;
+        if (_blobHitBitmapW <= 0 || _blobHitBitmapH <= 0 || gw <= 0 || gh <= 0)
+            return;
+
+        double invSx = gw / _blobHitBitmapW;
+        double invSy = gh / _blobHitBitmapH;
+
+        void AddOutline(BlobHitRegion hit, Brush stroke, double thickness)
+        {
+            Rect b = hit.Bounds;
+            var rect = new System.Windows.Shapes.Rectangle
+            {
+                Width = b.Width * invSx,
+                Height = b.Height * invSy,
+                Stroke = stroke,
+                StrokeThickness = thickness,
+                Fill = Brushes.Transparent,
+                IsHitTestVisible = false,
+                SnapsToDevicePixels = true,
+            };
+            Canvas.SetLeft(rect, b.X * invSx);
+            Canvas.SetTop(rect, b.Y * invSy);
+            BlobInteractionCanvas.Children.Add(rect);
+        }
+
+        if (_hoveredBlob is { } hv && !ReferenceEquals(hv, _selectedBlob))
+            AddOutline(hv, new SolidColorBrush(Color.FromArgb(0xCC, 0xC8, 0xD8, 0xF0)), 1.25);
+
+        if (_selectedBlob is { } sel)
+            AddOutline(sel, Brushes.White, 2.0);
     }
 
     private static int BlobDistSq(int ax, int ay, int bx, int by)
