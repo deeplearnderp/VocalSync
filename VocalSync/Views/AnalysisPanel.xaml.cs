@@ -271,6 +271,14 @@ public partial class AnalysisPanel : UserControl
     private BlobHitRegion? _hoveredBlob;
     private BlobHitRegion? _selectedBlob;
 
+    /// <summary>Drag-preview only — no analysis mutation.</summary>
+#pragma warning disable CS0414 // Set by drag-preview mouse handlers in a later phase.
+    private bool _isDraggingBlob;
+    private BlobHitRegion? _dragBlob;
+    private Point _dragStartMouseUi;
+    private int _dragPreviewSemitoneOffset;
+#pragma warning restore CS0414
+
     private bool _isRendering;
 
     /// <summary>Future-ready: hide original contour layer without removing data.</summary>
@@ -488,6 +496,7 @@ public partial class AnalysisPanel : UserControl
         _blobHitBitmapH = 0;
         _hoveredBlob = null;
         _selectedBlob = null;
+        ResetBlobDragPreviewState();
         BlobInteractionCanvas.Children.Clear();
         GraphContentGrid.ToolTip = null;
         GraphContentGrid.Cursor = Cursors.Arrow;
@@ -694,6 +703,7 @@ public partial class AnalysisPanel : UserControl
             _blobHitBitmapH = 0;
             _hoveredBlob = null;
             _selectedBlob = null;
+            ResetBlobDragPreviewState();
             BlobInteractionCanvas.Children.Clear();
             GraphContentGrid.ToolTip = null;
             GraphContentGrid.Cursor = Cursors.Arrow;
@@ -845,6 +855,7 @@ public partial class AnalysisPanel : UserControl
         _blobHitRegions.Clear();
         _hoveredBlob = null;
         _selectedBlob = null;
+        ResetBlobDragPreviewState();
         _blobHitBitmapW = w;
         _blobHitBitmapH = h;
 
@@ -1088,6 +1099,14 @@ public partial class AnalysisPanel : UserControl
         }
 
         return null;
+    }
+
+    private void ResetBlobDragPreviewState()
+    {
+        _isDraggingBlob = false;
+        _dragBlob = null;
+        _dragStartMouseUi = default;
+        _dragPreviewSemitoneOffset = 0;
     }
 
     private void GraphContentGrid_MouseMove(object sender, MouseEventArgs e)
