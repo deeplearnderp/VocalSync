@@ -271,7 +271,7 @@
                     <Border Background="#FF111111"
                             CornerRadius="4"
                             ClipToBounds="True">
-                        <!-- Graph stack: bg → blobs → contours → labels → playhead -->
+                        <!-- Graph stack: bg → blobs → contours → blob interaction → labels → playhead -->
                         <Grid x:Name="GraphContentGrid">
                             <Image x:Name="GraphImage"
                                    Stretch="Fill"
@@ -305,6 +305,8 @@
                                    Visibility="Collapsed"
                                    IsHitTestVisible="False"
                                    RenderOptions.BitmapScalingMode="NearestNeighbor"/>
+                            <Canvas x:Name="BlobInteractionCanvas"
+                                    IsHitTestVisible="False"/>
                             <!-- Octave note labels overlay (C3, C4…) — above contour bitmaps -->
                             <Canvas x:Name="NoteLabelsCanvas"
                                     IsHitTestVisible="False"/>
