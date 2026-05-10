@@ -310,6 +310,8 @@ public partial class AnalysisPanel : UserControl
     /// <summary>Drag-preview only — no analysis mutation.</summary>
     private bool _isDraggingBlob;
     private BlobHitRegion? _dragBlob;
+    /// <summary>When non-null with Count &gt; 1, all blobs transpose together with the same semitone delta (single undo step).</summary>
+    private List<BlobHitRegion>? _dragGroup;
     private Point _dragStartMouseUi;
     private Point _dragLastMouseUi;
     private int _dragPreviewSemitoneOffset;
@@ -1220,6 +1222,7 @@ public partial class AnalysisPanel : UserControl
             GraphContentGrid.ReleaseMouseCapture();
         _isDraggingBlob = false;
         _dragBlob = null;
+        _dragGroup = null;
         _dragStartMouseUi = default;
         _dragLastMouseUi = default;
         _dragPreviewSemitoneOffset = 0;
@@ -1248,8 +1251,7 @@ public partial class AnalysisPanel : UserControl
             _dragLastMouseUi = pos;
             double deltaY = pos.Y - _dragStartMouseUi.Y;
             int rawSemitone = (int)Math.Round(-deltaY / DragSemitoneReferencePixels);
-            int m = _dragBlob.Region.Midi;
-            int snapped = Math.Clamp(rawSemitone, MidiAbsMin - m, MidiAbsMax - m);
+            int snapped = ClampGroupTransposePreviewOffset(rawSemitone);
             _dragPreviewSemitoneOffset = snapped;
             RefreshBlobInteractionOverlay();
 
@@ -1322,10 +1324,21 @@ public partial class AnalysisPanel : UserControl
         ResetMarqueeState(releaseCapture: true);
 
         _hoveredBlob = hit;
-        ClearBlobSelection();
-        _selectedBlobs.Add(hit);
-        _selectedBlob = hit;
-        _dragBlob = hit;
+
+        if (_selectedBlobs.Count > 1 && _selectedBlobs.Contains(hit))
+        {
+            _dragBlob = hit;
+            _dragGroup = _selectedBlobs.ToList();
+        }
+        else
+        {
+            ClearBlobSelection();
+            _selectedBlobs.Add(hit);
+            _selectedBlob = hit;
+            _dragBlob = hit;
+            _dragGroup = null;
+        }
+
         _isDraggingBlob = true;
         _dragStartMouseUi = pos;
         _dragLastMouseUi = pos;
@@ -1358,26 +1371,34 @@ public partial class AnalysisPanel : UserControl
         if (!_isDraggingBlob)
             return;
 
-        bool commit = _dragBlob != null && _dragPreviewSemitoneOffset != 0;
+        List<BlobHitRegion>? dragGroupSnap = _dragGroup != null ? new List<BlobHitRegion>(_dragGroup) : null;
+        BlobHitRegion? primaryBlob = _dragBlob;
         int commitOffset = _dragPreviewSemitoneOffset;
-        float commitT0 = _dragBlob!.Region.StartTime;
-        float commitT1 = _dragBlob.Region.EndTime;
-        int commitRegionMidi = _dragBlob.Region.Midi;
+        bool commit = primaryBlob != null && commitOffset != 0;
+        float commitT0 = primaryBlob?.Region.StartTime ?? 0f;
+        float commitT1 = primaryBlob?.Region.EndTime ?? 0f;
+        int commitRegionMidi = primaryBlob?.Region.Midi ?? 0;
 
-        _isDraggingBlob = false;
-        _dragBlob = null;
-        _dragPreviewSemitoneOffset = 0;
-        if (GraphContentGrid.IsMouseCaptured)
-            GraphContentGrid.ReleaseMouseCapture();
+        ResetBlobDragPreviewState();
 
         RefreshBlobInteractionOverlay();
 
         if (commit && _correctedEditablePoints != null && _correctedEditablePoints.Length > 0)
         {
-            CommitBlobSemitoneEdit(commitRegionMidi, commitT0, commitT1, commitOffset);
-            RenderGraph(_points);
-            int targetMidi = Math.Clamp(commitRegionMidi + commitOffset, MidiAbsMin, MidiAbsMax);
-            TryReselectAfterBlobCommit(targetMidi, commitT0, commitT1);
+            if (dragGroupSnap is { Count: > 1 } groupList)
+            {
+                CommitGroupSemitoneTranspose(groupList, commitOffset);
+                RenderGraph(_points);
+                TryReselectAfterGroupTransposeCommit(groupList, commitOffset);
+            }
+            else
+            {
+                CommitBlobSemitoneEdit(commitRegionMidi, commitT0, commitT1, commitOffset);
+                RenderGraph(_points);
+                int targetMidi = Math.Clamp(commitRegionMidi + commitOffset, MidiAbsMin, MidiAbsMax);
+                TryReselectAfterBlobCommit(targetMidi, commitT0, commitT1);
+            }
+
             RefreshBlobInteractionOverlay();
         }
 
@@ -1436,6 +1457,66 @@ public partial class AnalysisPanel : UserControl
         Debug.WriteLine($"[CommitEdit] note={regionMidi} offset={semitoneOffset} frames={indices.Count}");
 
         PushPitchEditAction(new PitchEditAction(indices.ToArray(), before.ToArray(), after.ToArray()));
+    }
+
+    /// <summary>
+    /// Applies the same semitone delta to every corrected blob in <paramref name="group"/> and records a single undo step.
+    /// </summary>
+    private void CommitGroupSemitoneTranspose(IReadOnlyList<BlobHitRegion> group, int semitoneOffset)
+    {
+        if (_correctedEditablePoints == null || semitoneOffset == 0 || group.Count == 0)
+            return;
+
+        var indexSet = new HashSet<int>();
+        var beforeByIndex = new Dictionary<int, PitchPoint>();
+
+        foreach (BlobHitRegion blob in group)
+        {
+            if (!blob.Corrected)
+                continue;
+
+            int regionMidi = blob.Region.Midi;
+            float t0 = blob.Region.StartTime;
+            float t1 = blob.Region.EndTime;
+
+            for (int i = 0; i < _correctedEditablePoints.Length; i++)
+            {
+                if (indexSet.Contains(i))
+                    continue;
+
+                PitchPoint p = _correctedEditablePoints[i];
+                if (!p.IsVoiced || p.MidiNote != regionMidi)
+                    continue;
+                if (p.TimeSeconds < t0 || p.TimeSeconds > t1)
+                    continue;
+
+                indexSet.Add(i);
+                beforeByIndex[i] = ClonePitchPoint(p);
+            }
+        }
+
+        if (indexSet.Count == 0)
+        {
+            Debug.WriteLine($"[CommitEdit] group blobs={group.Count} offset={semitoneOffset} (no frames)");
+            return;
+        }
+
+        int[] indices = indexSet.OrderBy(i => i).ToArray();
+        var before = new PitchPoint[indices.Length];
+        var after = new PitchPoint[indices.Length];
+        for (int k = 0; k < indices.Length; k++)
+        {
+            int i = indices[k];
+            before[k] = beforeByIndex[i];
+            PitchPoint p = _correctedEditablePoints[i];
+            int newMidi = Math.Clamp(p.MidiNote + semitoneOffset, MidiAbsMin, MidiAbsMax);
+            float hz = MidiToHzProcessor(newMidi);
+            after[k] = BuildPitchPointFromFrequency(p.TimeSeconds, hz, p.Confidence);
+            _correctedEditablePoints[i] = after[k];
+        }
+
+        Debug.WriteLine($"[CommitEdit] group blobs={group.Count} offset={semitoneOffset} frames={indices.Length}");
+        PushPitchEditAction(new PitchEditAction(indices, before, after));
     }
 
     private void ClearPitchEditHistory()
@@ -1552,6 +1633,61 @@ public partial class AnalysisPanel : UserControl
         }
     }
 
+    private void TryReselectAfterGroupTransposeCommit(IReadOnlyList<BlobHitRegion> committedOldBlobs, int semitoneOffset)
+    {
+        _hoveredBlob = null;
+        ClearBlobSelection();
+
+        foreach (BlobHitRegion old in committedOldBlobs)
+        {
+            if (!old.Corrected)
+                continue;
+
+            float t0 = old.Region.StartTime;
+            float t1 = old.Region.EndTime;
+            int oldMidi = old.Region.Midi;
+            int targetMidi = Math.Clamp(oldMidi + semitoneOffset, MidiAbsMin, MidiAbsMax);
+
+            for (int i = _blobHitRegions.Count - 1; i >= 0; i--)
+            {
+                BlobHitRegion hi = _blobHitRegions[i];
+                if (!hi.Corrected)
+                    continue;
+                if (hi.Region.Midi != targetMidi)
+                    continue;
+                if (hi.Region.EndTime < t0 || hi.Region.StartTime > t1)
+                    continue;
+                _selectedBlobs.Add(hi);
+                break;
+            }
+        }
+
+        _selectedBlob = _selectedBlobs.Count == 1 ? _selectedBlobs.First() : null;
+    }
+
+    private int ClampGroupTransposePreviewOffset(int rawSemitone)
+    {
+        if (_dragBlob == null)
+            return 0;
+
+        if (_dragGroup is { Count: > 1 } g)
+        {
+            int posLimit = int.MaxValue;
+            int negLimit = int.MinValue;
+            foreach (BlobHitRegion b in g)
+            {
+                int m = b.Region.Midi;
+                posLimit = Math.Min(posLimit, MidiAbsMax - m);
+                negLimit = Math.Max(negLimit, MidiAbsMin - m);
+            }
+
+            return Math.Clamp(rawSemitone, negLimit, posLimit);
+        }
+
+        int m0 = _dragBlob.Region.Midi;
+        return Math.Clamp(rawSemitone, MidiAbsMin - m0, MidiAbsMax - m0);
+    }
+
     private static PitchPoint[] ClonePitchPointArray(PitchPoint[] source)
     {
         var copy = new PitchPoint[source.Length];
@@ -1571,13 +1707,13 @@ public partial class AnalysisPanel : UserControl
             Confidence = p.Confidence,
         };
 
-    private double ComputeDragPreviewCanvasOffsetY(double invSy)
+    private double ComputeDragPreviewCanvasOffsetY(BlobHitRegion blob, double invSy)
     {
-        if (!_isDraggingBlob || _dragBlob == null || _dragPreviewSemitoneOffset == 0)
+        if (!_isDraggingBlob || _dragPreviewSemitoneOffset == 0)
             return 0;
 
         int h = _blobHitBitmapH;
-        int m = _dragBlob.Region.Midi;
+        int m = blob.Region.Midi;
         int y0 = MidiToY(m, h, _renderMidiMin, _renderMidiMax);
         int y1 = m < _renderMidiMax
             ? MidiToY(m + 1, h, _renderMidiMin, _renderMidiMax)
@@ -1600,8 +1736,11 @@ public partial class AnalysisPanel : UserControl
 
         foreach (BlobHitRegion b in _selectedBlobs)
         {
-            double oy = _isDraggingBlob && ReferenceEquals(b, _dragBlob)
-                ? ComputeDragPreviewCanvasOffsetY(invSy)
+            double oy = _isDraggingBlob && _dragPreviewSemitoneOffset != 0
+                && (_dragGroup is { Count: > 1 }
+                    ? _dragGroup.Contains(b)
+                    : ReferenceEquals(b, _dragBlob))
+                ? ComputeDragPreviewCanvasOffsetY(b, invSy)
                 : 0;
             var kind = ReferenceEquals(b, _hoveredBlob) ? BlobOverlayKind.Combined : BlobOverlayKind.Selected;
             DrawBlobOverlay(b, invSx, invSy, kind, oy);
@@ -1615,8 +1754,9 @@ public partial class AnalysisPanel : UserControl
 
         if (_isDraggingBlob && _dragBlob != null)
         {
-            int targetMidi = Math.Clamp(_dragBlob.Region.Midi + _dragPreviewSemitoneOffset, 0, 127);
-            DrawDragHud(_dragLastMouseUi, _dragPreviewSemitoneOffset, targetMidi);
+            int targetMidi = Math.Clamp(_dragBlob.Region.Midi + _dragPreviewSemitoneOffset, MidiAbsMin, MidiAbsMax);
+            int phraseCount = _dragGroup is { Count: > 1 } g ? g.Count : 1;
+            DrawDragHud(_dragLastMouseUi, _dragPreviewSemitoneOffset, targetMidi, phraseCount);
         }
     }
 
@@ -1649,7 +1789,7 @@ public partial class AnalysisPanel : UserControl
         BlobInteractionCanvas.Children.Add(rect);
     }
 
-    private void DrawDragHud(Point mouseUi, int semitoneOffset, int targetMidi)
+    private void DrawDragHud(Point mouseUi, int semitoneOffset, int targetMidi, int phraseNoteCount)
     {
         string line1 = semitoneOffset switch
         {
@@ -1657,7 +1797,9 @@ public partial class AnalysisPanel : UserControl
             < 0 => $"{semitoneOffset} st",
             _ => "0 st",
         };
-        string line2 = FormatNoteNameFromMidi(targetMidi);
+        string line2 = phraseNoteCount > 1
+            ? $"{FormatNoteNameFromMidi(targetMidi)}  ·  {phraseNoteCount} notes"
+            : FormatNoteNameFromMidi(targetMidi);
 
         var text = new TextBlock
         {
