@@ -275,9 +275,12 @@ public partial class AnalysisPanel : UserControl
     private bool _isDraggingBlob;
     private BlobHitRegion? _dragBlob;
     private Point _dragStartMouseUi;
+    private Point _dragLastMouseUi;
     private int _dragPreviewSemitoneOffset;
 
     private const double DragSemitoneReferencePixels = 20.0;
+    private const double DragHudOffsetRightPx = 16.0;
+    private const double DragHudOffsetAbovePx = 24.0;
 
     private bool _isRendering;
 
@@ -1108,6 +1111,7 @@ public partial class AnalysisPanel : UserControl
         _isDraggingBlob = false;
         _dragBlob = null;
         _dragStartMouseUi = default;
+        _dragLastMouseUi = default;
         _dragPreviewSemitoneOffset = 0;
     }
 
@@ -1116,15 +1120,13 @@ public partial class AnalysisPanel : UserControl
         if (_isDraggingBlob && _dragBlob != null)
         {
             Point pos = e.GetPosition(GraphContentGrid);
+            _dragLastMouseUi = pos;
             double deltaY = pos.Y - _dragStartMouseUi.Y;
             int rawSemitone = (int)Math.Round(-deltaY / DragSemitoneReferencePixels);
             int m = _dragBlob.Region.Midi;
             int snapped = Math.Clamp(rawSemitone, MidiAbsMin - m, MidiAbsMax - m);
-            if (snapped != _dragPreviewSemitoneOffset)
-            {
-                _dragPreviewSemitoneOffset = snapped;
-                RefreshBlobInteractionOverlay();
-            }
+            _dragPreviewSemitoneOffset = snapped;
+            RefreshBlobInteractionOverlay();
 
             GraphContentGrid.Cursor = Cursors.SizeNS;
             return;
@@ -1186,6 +1188,7 @@ public partial class AnalysisPanel : UserControl
         _dragBlob = hit;
         _isDraggingBlob = true;
         _dragStartMouseUi = pos;
+        _dragLastMouseUi = pos;
         _dragPreviewSemitoneOffset = 0;
         GraphContentGrid.ToolTip = null;
         GraphContentGrid.CaptureMouse();
@@ -1252,16 +1255,75 @@ public partial class AnalysisPanel : UserControl
         double dragOy = draggingSelection ? ComputeDragPreviewCanvasOffsetY(invSy) : 0;
 
         if (ReferenceEquals(_hoveredBlob, _selectedBlob) && _selectedBlob != null)
-        {
             DrawBlobOverlay(_selectedBlob, invSx, invSy, BlobOverlayKind.Combined, dragOy);
-            return;
+        else
+        {
+            if (_selectedBlob != null)
+                DrawBlobOverlay(_selectedBlob, invSx, invSy, BlobOverlayKind.Selected, dragOy);
+
+            if (_hoveredBlob != null)
+                DrawBlobOverlay(_hoveredBlob, invSx, invSy, BlobOverlayKind.Hover, 0);
         }
 
-        if (_selectedBlob != null)
-            DrawBlobOverlay(_selectedBlob, invSx, invSy, BlobOverlayKind.Selected, dragOy);
+        if (_isDraggingBlob && _dragBlob != null)
+        {
+            int targetMidi = Math.Clamp(_dragBlob.Region.Midi + _dragPreviewSemitoneOffset, 0, 127);
+            DrawDragHud(_dragLastMouseUi, _dragPreviewSemitoneOffset, targetMidi);
+        }
+    }
 
-        if (_hoveredBlob != null)
-            DrawBlobOverlay(_hoveredBlob, invSx, invSy, BlobOverlayKind.Hover, 0);
+    private void DrawDragHud(Point mouseUi, int semitoneOffset, int targetMidi)
+    {
+        string line1 = semitoneOffset switch
+        {
+            > 0 => $"+{semitoneOffset} st",
+            < 0 => $"{semitoneOffset} st",
+            _ => "0 st",
+        };
+        string line2 = FormatNoteNameFromMidi(targetMidi);
+
+        var text = new TextBlock
+        {
+            FontFamily = new FontFamily("Segoe UI"),
+            FontSize = 10,
+            LineHeight = 14,
+            Foreground = Brushes.White,
+            Text = line1 + Environment.NewLine + line2,
+        };
+
+        var bg = new SolidColorBrush(Color.FromArgb(0xE8, 0x1C, 0x1E, 0x24));
+        var edge = new SolidColorBrush(Color.FromArgb(0x90, 0x5A, 0x5E, 0x68));
+        bg.Freeze();
+        edge.Freeze();
+
+        var border = new Border
+        {
+            Child = text,
+            Padding = new Thickness(8, 5, 8, 5),
+            CornerRadius = new CornerRadius(5),
+            Background = bg,
+            BorderBrush = edge,
+            BorderThickness = new Thickness(1),
+            SnapsToDevicePixels = true,
+            IsHitTestVisible = false,
+        };
+
+        border.Measure(new Size(double.PositiveInfinity, double.PositiveInfinity));
+        double hw = border.DesiredSize.Width;
+        double hh = border.DesiredSize.Height;
+
+        double gw = GraphContentGrid.ActualWidth;
+        double gh = GraphContentGrid.ActualHeight;
+        double left = mouseUi.X + DragHudOffsetRightPx;
+        double top = mouseUi.Y - DragHudOffsetAbovePx - hh;
+
+        const double margin = 4;
+        left = Math.Clamp(left, margin, Math.Max(margin, gw - hw - margin));
+        top = Math.Clamp(top, margin, Math.Max(margin, gh - hh - margin));
+
+        Canvas.SetLeft(border, left);
+        Canvas.SetTop(border, top);
+        BlobInteractionCanvas.Children.Add(border);
     }
 
     private enum BlobOverlayKind
